@@ -1,0 +1,433 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 5ee6379..18ee76d 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,5 +1,10 @@
+ // $Id$
+ 
++Drupal 6.6, 2008-10-22
++----------------------
++- Fixed security issues, (File inclusion, Cross site scripting), see SA-2008-067
++- Fixed a variety of small bugs.
++
+ Drupal 6.5, 2008-10-08
+ ----------------------
+ - Fixed security issues, (File upload access bypass, Access rules bypass,
+@@ -137,6 +142,10 @@ Drupal 6.0, 2008-02-13
+ - Removed old system updates. Updates from Drupal versions prior to 5.x will
+   require upgrading to 5.x before upgrading to 6.x.
+ 
++Drupal 5.12, 2008-10-22
++-----------------------
++- fixed security issues, (File inclusion), see SA-2008-067
++
+ Drupal 5.11, 2008-10-08
+ -----------------------
+ - fixed a variety of small bugs.
+diff --git a/includes/actions.inc b/includes/actions.inc
+index 9ed20ac..a0a59e8 100644
+--- a/includes/actions.inc
++++ b/includes/actions.inc
+@@ -298,7 +298,7 @@ function actions_synchronize($actions_in_code = array(), $delete_orphans = FALSE
+       }
+     }
+     else {
+-      $link = l(t('Remove orphaned actions'), 'admin/build/actions/orphan');
++      $link = l(t('Remove orphaned actions'), 'admin/settings/actions/orphan');
+       $count = count($actions_in_db);
+       watchdog('actions', format_plural($count, 'One orphaned action (%orphans) exists in the actions table. !link', '@count orphaned actions (%orphans) exist in the actions table. !link'), array('@count' => $count, '%orphans' => $orphans, '!link' => $link), WATCHDOG_WARNING);
+     }
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index f5fabb2..7601ef0 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -238,6 +238,11 @@ function conf_path($require_settings = TRUE, $reset = FALSE) {
+ 
+   $confdir = 'sites';
+   $uri = explode('/', $_SERVER['SCRIPT_NAME'] ? $_SERVER['SCRIPT_NAME'] : $_SERVER['SCRIPT_FILENAME']);
++  if (strpos($_SERVER['HTTP_HOST'], '/') !== FALSE) {
++    // A HTTP_HOST containing slashes may be an attack and is invalid.
++    header('HTTP/1.1 400 Bad Request');
++    exit;
++  }
+   $server = explode('.', implode('.', array_reverse(explode(':', rtrim($_SERVER['HTTP_HOST'], '.')))));
+   for ($i = count($uri) - 1; $i > 0; $i--) {
+     for ($j = count($server); $j > 0; $j--) {
+@@ -618,7 +623,7 @@ function drupal_page_cache_header($cache) {
+     header('HTTP/1.1 304 Not Modified');
+     // All 304 responses must send an etag if the 200 response for the same object contained an etag
+     header("Etag: $etag");
+-    exit();
++    return;
+   }
+ 
+   // Send appropriate response:
+diff --git a/includes/database.inc b/includes/database.inc
+index f1c51c5..e9de0bc 100644
+--- a/includes/database.inc
++++ b/includes/database.inc
+@@ -172,6 +172,7 @@ function db_set_active($name = 'default') {
+  */
+ function _db_error_page($error = '') {
+   global $db_type;
++  drupal_init_language();
+   drupal_maintenance_theme();
+   drupal_set_header('HTTP/1.1 503 Service Unavailable');
+   drupal_set_title('Site off-line');
+diff --git a/includes/file.inc b/includes/file.inc
+index 3d3bf82..8f266e1 100644
+--- a/includes/file.inc
++++ b/includes/file.inc
+@@ -792,7 +792,9 @@ function file_set_status(&$file, $status) {
+  * @param $headers An array of http headers to send along with file.
+  */
+ function file_transfer($source, $headers) {
+-  ob_end_clean();
++  if (ob_get_level()) {
++    ob_end_clean();
++  }
+ 
+   foreach ($headers as $header) {
+     // To prevent HTTP header injection, we delete new lines that are
+diff --git a/includes/form.inc b/includes/form.inc
+index d36b8bf..107a321 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -2013,7 +2013,7 @@ function theme_textfield($element) {
+   $extra = '';
+   $output = '';
+ 
+-  if ($element['#autocomplete_path']) {
++  if ($element['#autocomplete_path'] && menu_valid_path(array('link_path' => $element['#autocomplete_path']))) {
+     drupal_add_js('misc/autocomplete.js');
+     $class[] = 'form-autocomplete';
+     $extra =  '<input class="autocomplete" type="hidden" id="'. $element['#id'] .'-autocomplete" value="'. check_url(url($element['#autocomplete_path'], array('absolute' => TRUE))) .'" disabled="disabled" />';
+diff --git a/includes/menu.inc b/includes/menu.inc
+index a5c9614..46cad96 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -1265,19 +1265,15 @@ function menu_navigation_links($menu_name, $level = 0) {
+   $links = array();
+   foreach ($tree as $item) {
+     if (!$item['link']['hidden']) {
++      $class = '';
+       $l = $item['link']['localized_options'];
+       $l['href'] = $item['link']['href'];
+       $l['title'] = $item['link']['title'];
+       if ($item['link']['in_active_trail']) {
+-        if (empty($l['attributes']['class'])) {
+-          $l['attributes']['class'] = 'active-trail';
+-        }
+-        else {
+-          $l['attributes']['class'] .= ' active-trail'; 
+-        }
++        $class = ' active-trail';
+       }
+-      // Keyed with unique menu id to generate classes from theme_links().
+-      $links['menu-'. $item['link']['mlid']] = $l;
++      // Keyed with the unique mlid to generate classes in theme_links().
++      $links['menu-'. $item['link']['mlid'] . $class] = $l;
+     }
+   }
+   return $links;
+@@ -2218,7 +2214,10 @@ function _menu_router_build($callbacks) {
+     // Extract load and to_arg functions.
+     foreach ($parts as $k => $part) {
+       $match = FALSE;
+-      if (preg_match('/^%([a-z_]*)$/', $part, $matches)) {
++      // Look for wildcards in the form allowed to be used in PHP functions,
++      // because we are using these to construct the load function names.
++      // See http://php.net/manual/en/language.functions.php for reference.
++      if (preg_match('/^%(|[a-zA-Z_\x7f-\xff][a-zA-Z0-9_\x7f-\xff]*)$/', $part, $matches)) {
+         if (empty($matches[1])) {
+           $match = TRUE;
+           $load_functions[$k] = NULL;
+@@ -2421,7 +2420,7 @@ function _menu_site_is_offline() {
+       // page redirects], and specifically suppress its display on the site
+       // maintenance page.
+       if (drupal_get_normal_path($_GET['q']) != 'admin/settings/site-maintenance') {
+-        drupal_set_message(t('Operating in off-line mode.'), 'status', FALSE);
++        drupal_set_message(l(t('Operating in off-line mode.'), 'admin/settings/site-maintenance'), 'status', FALSE);
+       }
+     }
+     else {
+diff --git a/includes/path.inc b/includes/path.inc
+index df168c5..99efc0e 100644
+--- a/includes/path.inc
++++ b/includes/path.inc
+@@ -58,6 +58,7 @@ function drupal_lookup_path($action, $path = '', $path_language = '') {
+   if ($action == 'wipe') {
+     $map = array();
+     $no_src = array();
++    $count = NULL;
+   }
+   elseif ($count > 0 && $path != '') {
+     if ($action == 'alias') {
+diff --git a/includes/session.inc b/includes/session.inc
+index 0b41230..725c45d 100644
+--- a/includes/session.inc
++++ b/includes/session.inc
+@@ -61,7 +61,7 @@ function sess_write($key, $value) {
+   // the session table. This reduces memory and server load, and gives more useful
+   // statistics. We can't eliminate anonymous session table rows without breaking
+   // the throttle module and the "Who's Online" block.
+-  if (!session_save_session() || (empty($_COOKIE[session_name()]) && empty($value))) {
++  if (!session_save_session() || ($user->uid == 0 && empty($_COOKIE[session_name()]) && empty($value))) {
+     return TRUE;
+   }
+ 
+diff --git a/includes/theme.inc b/includes/theme.inc
+index 8c891f1..98f633d 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -693,7 +693,14 @@ function drupal_discover_template($paths, $suggestions, $extension = '.tpl.php')
+ }
+ 
+ /**
+- * Return the path to the currently selected theme.
++ * Return the path to the current themed element.
++ *
++ * It can point to the active theme or the module handling a themed implementation.
++ * For example, when invoked within the scope of a theming call it will depend
++ * on where the theming function is handled. If implemented from a module, it
++ * will point to the module. If implemented from the active theme, it will point
++ * to the active theme. When called outside the scope of a theming call, it will
++ * always point to the active theme.
+  */
+ function path_to_theme() {
+   global $theme_path;
+diff --git a/includes/xmlrpc.inc b/includes/xmlrpc.inc
+index 284b5b7..5f4f9cb 100644
+--- a/includes/xmlrpc.inc
++++ b/includes/xmlrpc.inc
+@@ -384,13 +384,13 @@ function xmlrpc_date($time) {
+   $xmlrpc_date->is_date = TRUE;
+   // $time can be a PHP timestamp or an ISO one
+   if (is_numeric($time)) {
+-    $xmlrpc_date->year = date('Y', $time);
+-    $xmlrpc_date->month = date('m', $time);
+-    $xmlrpc_date->day = date('d', $time);
+-    $xmlrpc_date->hour = date('H', $time);
+-    $xmlrpc_date->minute = date('i', $time);
+-    $xmlrpc_date->second = date('s', $time);
+-    $xmlrpc_date->iso8601 = date('Ymd\TH:i:s', $time);
++    $xmlrpc_date->year = gmdate('Y', $time);
++    $xmlrpc_date->month = gmdate('m', $time);
++    $xmlrpc_date->day = gmdate('d', $time);
++    $xmlrpc_date->hour = gmdate('H', $time);
++    $xmlrpc_date->minute = gmdate('i', $time);
++    $xmlrpc_date->second = gmdate('s', $time);
++    $xmlrpc_date->iso8601 = gmdate('Ymd\TH:i:s', $time);
+   }
+   else {
+     $xmlrpc_date->iso8601 = $time;
+diff --git a/install.php b/install.php
+index 56eafaa..bfdc3b8 100644
+--- a/install.php
++++ b/install.php
+@@ -838,7 +838,7 @@ function _install_module_batch($module, $module_name, &$context) {
+   // steps.
+   module_enable(array($module));
+   $context['results'][] = $module;
+-  $context['message'] = 'Installed '. $module_name .' module.';
++  $context['message'] = st('Installed %module module.', array('%module' => $module_name));
+ }
+ 
+ /**
+diff --git a/modules/block/block.admin.inc b/modules/block/block.admin.inc
+index aca6551..e7f2fa9 100644
+--- a/modules/block/block.admin.inc
++++ b/modules/block/block.admin.inc
+@@ -302,7 +302,7 @@ function block_add_block_form_submit($form, &$form_state) {
+ 
+   foreach (list_themes() as $key => $theme) {
+     if ($theme->status) {
+-      db_query("INSERT INTO {blocks} (visibility, pages, custom, title, module, theme, status, weight, delta, cache) VALUES(%d, '%s', %d, '%s', '%s', '%s', %d, %d, %d, %d)", $form_state['values']['visibility'], trim($form_state['values']['pages']), $form_state['values']['custom'], $form_state['values']['title'], $form_state['values']['module'], $theme->name, 0, 0, $delta, BLOCK_NO_CACHE);
++      db_query("INSERT INTO {blocks} (visibility, pages, custom, title, module, theme, status, weight, delta, cache) VALUES(%d, '%s', %d, '%s', '%s', '%s', %d, %d, '%s', %d)", $form_state['values']['visibility'], trim($form_state['values']['pages']), $form_state['values']['custom'], $form_state['values']['title'], $form_state['values']['module'], $theme->name, 0, 0, $delta, BLOCK_NO_CACHE);
+     }
+   }
+ 
+@@ -333,7 +333,7 @@ function block_box_delete(&$form_state, $bid = 0) {
+  */
+ function block_box_delete_submit($form, &$form_state) {
+   db_query('DELETE FROM {boxes} WHERE bid = %d', $form_state['values']['bid']);
+-  db_query("DELETE FROM {blocks} WHERE module = 'block' AND delta = %d", $form_state['values']['bid']);
++  db_query("DELETE FROM {blocks} WHERE module = 'block' AND delta = '%s'", $form_state['values']['bid']);
+   drupal_set_message(t('The block %name has been removed.', array('%name' => $form_state['values']['info'])));
+   cache_clear_all();
+   $form_state['redirect'] = 'admin/build/block';
+diff --git a/modules/book/book.admin.inc b/modules/book/book.admin.inc
+index c608664..0a451d7 100644
+--- a/modules/book/book.admin.inc
++++ b/modules/book/book.admin.inc
+@@ -170,8 +170,8 @@ function _book_admin_table($node, &$form) {
+  * @see book_admin_edit()
+  */
+ function _book_admin_table_tree($tree, &$form) {
+-  foreach ($tree as $key => $data) {
+-    $form[$key] = array(
++  foreach ($tree as $data) {
++    $form['book-admin-'. $data['link']['nid']] = array(
+       '#item' => $data['link'],
+       'nid' => array('#type' => 'value', '#value' => $data['link']['nid']),
+       'depth' => array('#type' => 'value', '#value' => $data['link']['depth']),
+diff --git a/modules/forum/forum-topic-list.tpl.php b/modules/forum/forum-topic-list.tpl.php
+index 5995850..900b7df 100644
+--- a/modules/forum/forum-topic-list.tpl.php
++++ b/modules/forum/forum-topic-list.tpl.php
+@@ -52,8 +52,8 @@
+           <a href="<?php print $topic->new_url; ?>"><?php print $topic->new_text; ?></a>
+         <?php endif; ?>
+       </td>
+-      <td class="created"><?php print $topic->created; ?>
+-      <td class="last-reply"><?php print $topic->last_reply; ?>
++      <td class="created"><?php print $topic->created; ?></td>
++      <td class="last-reply"><?php print $topic->last_reply; ?></td>
+     <?php endif; ?>
+     </tr>
+   <?php endforeach; ?>
+diff --git a/modules/locale/locale.module b/modules/locale/locale.module
+index ad9a855..45c3abe 100644
+--- a/modules/locale/locale.module
++++ b/modules/locale/locale.module
+@@ -573,11 +573,12 @@ function locale_block($op = 'list', $delta = 0) {
+   // Only show if we have at least two languages and language dependent
+   // web addresses, so we can actually link to other language versions.
+   elseif ($op == 'view' && variable_get('language_count', 1) > 1 && variable_get('language_negotiation', LANGUAGE_NEGOTIATION_NONE) != LANGUAGE_NEGOTIATION_NONE) {
++    $path = drupal_is_front_page() ? '<front>' : $_GET['q'];
+     $languages = language_list('enabled');
+     $links = array();
+     foreach ($languages[1] as $language) {
+       $links[$language->language] = array(
+-        'href'       => $_GET['q'],
++        'href'       => $path,
+         'title'      => $language->native,
+         'language'   => $language,
+         'attributes' => array('class' => 'language-link'),
+@@ -588,7 +589,7 @@ function locale_block($op = 'list', $delta = 0) {
+     // A translation link may need to point to a different path or use
+     // a translated link text before going through l(), which will just
+     // handle the path aliases.
+-    drupal_alter('translation_link', $links, $_GET['q']);
++    drupal_alter('translation_link', $links, $path);
+ 
+     $block['subject'] = t('Languages');
+     $block['content'] = theme('links', $links, array());
+diff --git a/modules/profile/profile.admin.inc b/modules/profile/profile.admin.inc
+index 4a86e99..8796422 100644
+--- a/modules/profile/profile.admin.inc
++++ b/modules/profile/profile.admin.inc
+@@ -269,6 +269,7 @@ Unless you know what you are doing, it is highly recommended that you prefix the
+   $form['fields']['autocomplete'] = array('#type' => 'checkbox',
+     '#title' => t('Form will auto-complete while user is typing.'),
+     '#default_value' => $edit['autocomplete'],
++    '#description' => t('For security, auto-complete will be disabled if the user does not have access to user profiles.'),
+   );
+   $form['fields']['required'] = array('#type' => 'checkbox',
+     '#title' => t('The user must enter a value.'),
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index 8b81ca7..aa2678e 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -680,16 +680,16 @@ function system_modules($form_state = array()) {
+       foreach ($file->info['dependencies'] as $dependency) {
+         if (!isset($files[$dependency]) || !$files[$dependency]->status) {
+           if (isset($files[$dependency])) {
+-            $dependencies[] = $files[$dependency]->info['name'] . t(' (<span class="admin-disabled">disabled</span>)');
++            $dependencies[] = t('@module (<span class="admin-disabled">disabled</span>)', array('@module' => $files[$dependency]->info['name']));
+           }
+           else {
+-            $dependencies[] = drupal_ucfirst($dependency) . t(' (<span class="admin-missing">missing</span>)');
++            $dependencies[] = t('@module (<span class="admin-missing">missing</span>)', array('@module' => drupal_ucfirst($dependency)));
+             $disabled[] = $filename;
+             $form['disabled_modules']['#value'][$filename] = FALSE;
+           }
+         }
+         else {
+-          $dependencies[] = $files[$dependency]->info['name'] . t(' (<span class="admin-enabled">enabled</span>)');
++          $dependencies[] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $files[$dependency]->info['name']));
+         }
+       }
+ 
+@@ -707,12 +707,12 @@ function system_modules($form_state = array()) {
+     $dependents = array();
+     foreach ($file->info['dependents'] as $dependent) {
+       if ($files[$dependent]->status == 1) {
+-        $dependents[] = $files[$dependent]->info['name'] . t(' (<span class="admin-enabled">enabled</span>)');
++        $dependents[] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $files[$dependent]->info['name']));
+         $disabled[] = $filename;
+         $form['disabled_modules']['#value'][$filename] = TRUE;
+       }
+       else {
+-        $dependents[] = $files[$dependent]->info['name'] . t(' (<span class="admin-disabled">disabled</span>)');
++        $dependents[] = t('@module (<span class="admin-disabled">disabled</span>)', array('@module' => $files[$dependent]->info['name']));
+       }
+     }
+ 
+diff --git a/modules/system/system.module b/modules/system/system.module
+index cfb857a..934a565 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.5');
++define('VERSION', '6.6');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/translation/translation.module b/modules/translation/translation.module
+index df09094..4039884 100644
+--- a/modules/translation/translation.module
++++ b/modules/translation/translation.module
+@@ -244,8 +244,8 @@ function translation_nodeapi(&$node, $op, $teaser, $page) {
+  */
+ function translation_remove_from_set($node) {
+   if (isset($node->tnid)) {
+-    if (db_result(db_query('SELECT COUNT(*) FROM {node} WHERE tnid = %d', $node->tnid)) <= 2) {
+-      // There would only be one node left in the set: remove the set altogether.
++    if (db_result(db_query('SELECT COUNT(*) FROM {node} WHERE tnid = %d', $node->tnid)) == 1) {
++      // There is only one node left in the set: remove the set altogether.
+       db_query('UPDATE {node} SET tnid = 0, translate = 0 WHERE tnid = %d', $node->tnid);
+     }
+     else {
+diff --git a/modules/user/user-profile.tpl.php b/modules/user/user-profile.tpl.php
+index 14a5bda..9d24f2a 100644
+--- a/modules/user/user-profile.tpl.php
++++ b/modules/user/user-profile.tpl.php
+@@ -13,7 +13,7 @@
+  * It is keyed to the name of each category or other data attached to the
+  * account. If it is a category it will contain all the profile items. By
+  * default $profile['summary'] is provided which contains data on the user's
+- * history. Other data can be included by modules. $profile['picture'] is
++ * history. Other data can be included by modules. $profile['user_picture'] is
+  * available by default showing the account picture.
+  *
+  * Also keep in mind that profile items and their categories can be defined by
+@@ -26,17 +26,19 @@
+  *
+  * To check for all available data within $profile, use the code below.
+  *
+- *   <?php print '<pre>'. check_plain(print_r($profile, 1)) .'</pre>'; ?>
++ * @code
++ *   print '<pre>'. check_plain(print_r($profile, 1)) .'</pre>';
++ * @endcode
+  *
+  * @see user-profile-category.tpl.php
+- *      where the html is handled for the group.
++ *   Where the html is handled for the group.
+  * @see user-profile-field.tpl.php
+- *      where the html is handled for each item in the group.
++ *   Where the html is handled for each item in the group.
+  *
+  * Available variables:
+- * - $user_profile: All user profile data. Ready for print.
+- * - $profile: Keyed array of profile categories and their items or other data
+- *   provided by modules.
++ *   - $user_profile: All user profile data. Ready for print.
++ *   - $profile: Keyed array of profile categories and their items or other data
++ *     provided by modules.
+  *
+  * @see template_preprocess_user_profile()
+  */

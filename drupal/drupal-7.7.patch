@@ -1,0 +1,41 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 3f953ce..33cf9e2 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,23 @@
+ 
++Drupal 7.7, 2011-07-27
++----------------------
++- Fixed VERSION string.
++
++Drupal 7.6, 2011-07-27
++----------------------
++- Fixed support for remote streamwrappers.
++- AJAX now binds to 'click' instead of 'mousedown'.
++- 'Translatable' flag on fields created in UI now defaults to FALSE, to match those created via the API.
++- Performance enhancement to permissions page on large numbers of permissions.
++- More secure password generation.
++- Fix for temporary directory on Windows servers.
++- run-tests.sh now uses proc_open() instead of pcntl_fork() for better Windows support.
++- Numerous upgrade path fixes.
++- Numerous documentation fixes.
++- Numerous notice fixes.
++- Numerous fixes to improve PHP 5.4 support.
++- Numerous RTL improvements.
++
+ Drupal 7.5, 2011-07-27
+ ----------------------
+ - Fixed security issue (Access bypass), see SA-CORE-2011-003.
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index e9837da..a3be5fc 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -8,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '7.5');
++define('VERSION', '7.7');
+ 
+ /**
+  * Core API compatibility.

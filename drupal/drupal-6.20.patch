@@ -1,0 +1,1562 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 6af2df3..a7eb7a8 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,5 +1,9 @@
+ // $Id$
+ 
++Drupal 6.20, 2010-12-15
++----------------------
++- Fixed a variety of small bugs, improved code documentation.
++
+ Drupal 6.19, 2010-08-11
+ ----------------------
+ - Fixed a variety of small bugs, improved code documentation.
+diff --git a/INSTALL.txt b/INSTALL.txt
+index 7163d3b..b82651f 100644
+--- a/INSTALL.txt
++++ b/INSTALL.txt
+@@ -71,7 +71,7 @@ INSTALLATION
+    different language, we have good news. You can install and use Drupal in
+    other languages from the start. Check whether a released package of the
+    language desired is available for this Drupal version at
+-   http://drupal.org/project/translations and download the package. Extract
++   http://localize.drupal.org and download the package. Extract
+    the contents to the same directory where you extracted Drupal into.
+ 
+ 2. CREATE THE CONFIGURATION FILE AND GRANT WRITE PERMISSIONS
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index b0fbad6..01ae311 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -376,7 +376,7 @@ function conf_init() {
+   global $base_url, $base_path, $base_root;
+ 
+   // Export the following settings.php variables to the global namespace
+-  global $db_url, $db_prefix, $cookie_domain, $conf, $installed_profile, $update_free_access;
++  global $db_url, $db_prefix, $db_collation, $cookie_domain, $conf, $installed_profile, $update_free_access;
+   $conf = array();
+ 
+   if (isset($_SERVER['HTTP_HOST'])) {
+@@ -488,7 +488,7 @@ function conf_init() {
+  * the above, depending on where the module is located.
+  *
+  * @param $type
+- *   The type of the item (i.e. theme, theme_engine, module).
++ *   The type of the item (i.e. theme, theme_engine, module, profile).
+  * @param $name
+  *   The name of the item for which the filename is requested.
+  * @param $filename
+@@ -687,7 +687,7 @@ function bootstrap_invoke_all($hook) {
+  * including a theme, engine, module, etc., more than once.
+  *
+  * @param $type
+- *   The type of item to load (i.e. theme, theme_engine, module).
++ *   The type of item to load (i.e. theme, theme_engine, module, profile).
+  * @param $name
+  *   The name of the item to load.
+  *
+diff --git a/includes/cache.inc b/includes/cache.inc
+index 3d04982..8064500 100644
+--- a/includes/cache.inc
++++ b/includes/cache.inc
+@@ -39,7 +39,7 @@ function cache_get($cid, $table = 'cache') {
+     // cache timer. The cache variable is loaded into the $user object by
+     // sess_read() in session.inc.
+     else {
+-      if ($user->cache > $cache->created) {
++      if (isset($user->cache) && $user->cache > $cache->created) {
+         // This cache data is too old and thus not valid for us, ignore it.
+         return 0;
+       }
+diff --git a/includes/common.inc b/includes/common.inc
+index ef4e235..cf70d22 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -953,14 +953,15 @@ function t($string, $args = array(), $langcode = NULL) {
+  */
+ 
+ /**
+- * Verify the syntax of the given e-mail address.
++ * Verifies the syntax of the given e-mail address.
+  *
+- * Empty e-mail addresses are allowed. See RFC 2822 for details.
++ * See RFC 2822 for details.
+  *
+  * @param $mail
+  *   A string containing an e-mail address.
+  * @return
+- *   TRUE if the address is in a valid format.
++ *   1 if the email address is valid, 0 if it is invalid or empty, and FALSE if
++ *   there is an input error (such as passing in an array instead of a string).
+  */
+ function valid_email_address($mail) {
+   $user = '[a-zA-Z0-9_\-\.\+\^!#\$%&*+\/\=\?\`\|\{\}~\']+';
+@@ -1706,7 +1707,7 @@ function drupal_eval($code) {
+  * Returns the path to a system item (module, theme, etc.).
+  *
+  * @param $type
+- *   The type of the item (i.e. theme, theme_engine, module).
++ *   The type of the item (i.e. theme, theme_engine, module, profile).
+  * @param $name
+  *   The name of the item for which the path is requested.
+  *
+@@ -1744,7 +1745,7 @@ function drupal_add_link($attributes) {
+  *
+  * @param $path
+  *   (optional) The path to the CSS file relative to the base_path(), e.g.,
+- *   /modules/devel/devel.css.
++ *   modules/devel/devel.css.
+  *
+  *   Modules should always prefix the names of their CSS files with the module
+  *   name, for example: system-menus.css rather than simply menus.css. Themes
+@@ -2024,12 +2025,12 @@ function drupal_load_stylesheet($file, $optimize = NULL) {
+       // Regexp to match single quoted strings.
+       $single_quot = "'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'";
+       $contents = preg_replace_callback(
+-        "<$double_quot|$single_quot|$comment>Sus",  // Match all comment blocks along
+-        "_process_comment",                         // with double/single quoted strings
+-        $contents);                                 // and feed them to _process_comment().
++        "<$double_quot|$single_quot|$comment>Ss",  // Match all comment blocks along
++        "_process_comment",                        // with double/single quoted strings
++        $contents);                                // and feed them to _process_comment().
+       $contents = preg_replace(
+-        '<\s*([@{}:;,]|\)\s|\s\()\s*>S',            // Remove whitespace around separators,
+-        '\1', $contents);                           // but keep space around parentheses.
++        '<\s*([@{}:;,]|\)\s|\s\()\s*>S',           // Remove whitespace around separators,
++        '\1', $contents);                          // but keep space around parentheses.
+       // End the file with a new line.
+       $contents .= "\n";
+     }
+@@ -2842,13 +2843,21 @@ function drupal_system_listing($mask, $directory, $key = 'name', $min_depth = 1)
+  * interface for all altering operations.
+  *
+  * @param $type
+- *   The data type of the structured array. 'form', 'links',
+- *   'node_content', and so on are several examples.
++ *   A string describing the type of the alterable $data (e.g. 'form',
++ *   'profile').
+  * @param $data
+- *   The structured array to be altered.
++ *   The variable that will be passed to hook_TYPE_alter() implementations to
++ *   be altered. The type of this variable depends on $type. For example, when
++ *   altering a 'form', $data will be a structured array. When altering a
++ *   'profile', $data will be an object. If you need to pass additional
++ *   parameters by reference to the hook_TYPE_alter() functions, include them
++ *   as an array in $data['__drupal_alter_by_ref']. They will be unpacked and
++ *   passed to the hook_TYPE_alter() functions, before the additional
++ *   ... parameters (see below).
+  * @param ...
+- *   Any additional params will be passed on to the called
+- *   hook_$type_alter functions.
++ *   Any additional parameters will be passed on to the hook_TYPE_alter()
++ *   functions (not by reference), after any by-reference parameters included
++ *   in $data (see above)
+  */
+ function drupal_alter($type, &$data) {
+   // PHP's func_get_args() always returns copies of params, not references, so
+@@ -3148,10 +3157,6 @@ function drupal_common_theme() {
+     'pager_link' => array(
+       'arguments' => array('text' => NULL, 'page_new' => NULL, 'element' => NULL, 'parameters' => array(), 'attributes' => array()),
+     ),
+-    // from locale.inc
+-    'locale_admin_manage_screen' => array(
+-      'arguments' => array('form' => NULL),
+-    ),
+     // from menu.inc
+     'menu_item_link' => array(
+       'arguments' => array('item' => NULL),
+@@ -3267,7 +3272,10 @@ function drupal_get_schema($table = NULL, $rebuild = FALSE) {
+ 
+       // Invoke hook_schema for all modules.
+       foreach (module_implements('schema') as $module) {
+-        $current = module_invoke($module, 'schema');
++        // Cast the result of hook_schema() to an array, as a NULL return value
++        // would cause array_merge() to set the $schema variable to NULL as well.
++        // That would break modules which use $schema further down the line.
++        $current = (array) module_invoke($module, 'schema');
+         _drupal_initialize_schema($module, $current);
+         $schema = array_merge($schema, $current);
+       }
+@@ -3370,9 +3378,11 @@ function drupal_get_schema_unprocessed($module, $table = NULL) {
+   if (!is_null($table) && isset($schema[$table])) {
+     return $schema[$table];
+   }
+-  else {
++  elseif (!empty($schema)) {
+     return $schema;
+   }
++
++  return array();
+ }
+ 
+ /**
+diff --git a/includes/database.inc b/includes/database.inc
+index 690e9ff..e8065a8 100644
+--- a/includes/database.inc
++++ b/includes/database.inc
+@@ -454,7 +454,6 @@ function db_escape_table($string) {
+  *   - 'fields': An associative array ('fieldname' => specification)
+  *     that describes the table's database columns.  The specification
+  *     is also an array.  The following specification parameters are defined:
+- *
+  *     - 'description': A string describing this field and its purpose.
+  *       References to other tables should be enclosed in
+  *       curly-brackets.  For example, the node table vid field
+@@ -473,7 +472,6 @@ function db_escape_table($string) {
+  *       datatypes will be used (e.g. on MySQL, TINYINT vs. INT vs. BIGINT).
+  *       'normal', the default, selects the base type (e.g. on MySQL,
+  *       INT, VARCHAR, BLOB, etc.).
+- *
+  *       Not all sizes are available for all data types. See
+  *       db_type_map() for possible combinations.
+  *     - 'not null': If true, no NULL values will be allowed in this
+@@ -492,10 +490,8 @@ function db_escape_table($string) {
+  *       the precision (total number of significant digits) and scale
+  *       (decimal digits right of the decimal point).  Both values are
+  *       mandatory.  Ignored for other field types.
+- *
+  *     All parameters apart from 'type' are optional except that type
+  *     'numeric' columns must specify 'precision' and 'scale'.
+- *
+  *  - 'primary key': An array of one or more key column specifiers (see below)
+  *    that form the primary key.
+  *  - 'unique keys': An associative array of unique keys ('keyname' =>
+diff --git a/includes/database.mysql-common.inc b/includes/database.mysql-common.inc
+index 957e31e..cfcdcf0 100644
+--- a/includes/database.mysql-common.inc
++++ b/includes/database.mysql-common.inc
+@@ -60,7 +60,16 @@ function db_query($query) {
+ function db_create_table_sql($name, $table) {
+ 
+   if (empty($table['mysql_suffix'])) {
+-    $table['mysql_suffix'] = "/*!40100 DEFAULT CHARACTER SET UTF8 */";
++    $table['mysql_suffix'] = '/*!40100 DEFAULT CHARACTER SET utf8';
++    // By default, MySQL uses the default collation for new tables, which is
++    // 'utf8_general_ci' for utf8. If an alternate collation has been set, it
++    // needs to be explicitly specified.
++    // @see db_connect()
++    $collation = (!empty($table['collation']) ? $table['collation'] : (!empty($GLOBALS['db_collation']) ? $GLOBALS['db_collation'] : ''));
++    if ($collation) {
++      $table['mysql_suffix'] .= ' COLLATE ' . $collation;
++    }
++    $table['mysql_suffix'] .= ' */';
+   }
+ 
+   $sql = "CREATE TABLE {". $name ."} (\n";
+diff --git a/includes/database.mysql.inc b/includes/database.mysql.inc
+index 7d177c8..2ec9ee4 100644
+--- a/includes/database.mysql.inc
++++ b/includes/database.mysql.inc
+@@ -80,8 +80,16 @@ function db_connect($url) {
+     _db_error_page(mysql_error());
+   }
+ 
+-  // Force UTF-8.
+-  mysql_query('SET NAMES "utf8"', $connection);
++  // Force MySQL to use the UTF-8 character set. Also set the collation, if a
++  // certain one has been set; otherwise, MySQL defaults to 'utf8_general_ci'
++  // for UTF-8.
++  if (!empty($GLOBALS['db_collation'])) {
++    mysql_query('SET NAMES utf8 COLLATE '. $GLOBALS['db_collation'], $connection);
++  }
++  else {
++    mysql_query('SET NAMES utf8', $connection);
++  }
++
+   return $connection;
+ }
+ 
+@@ -169,6 +177,7 @@ function db_fetch_array($result) {
+  *
+  * @param $result
+  *   A database query result resource, as returned from db_query().
++ * 
+  * @return
+  *   The resulting field or FALSE.
+  */
+@@ -337,6 +346,12 @@ function db_unlock_tables() {
+ 
+ /**
+  * Check if a table exists.
++ *
++ * @param $table
++ *   The name of the table.
++ *
++ * @return
++ *   TRUE if the table exists, and FALSE if the table does not exist.
+  */
+ function db_table_exists($table) {
+   return (bool) db_fetch_object(db_query("SHOW TABLES LIKE '{". db_escape_table($table) ."}'"));
+@@ -344,6 +359,14 @@ function db_table_exists($table) {
+ 
+ /**
+  * Check if a column exists in the given table.
++ *
++ * @param $table
++ *   The name of the table.
++ * @param $column
++ *   The name of the column.
++ *
++ * @return
++ *   TRUE if the column exists, and FALSE if the column does not exist.
+  */
+ function db_column_exists($table, $column) {
+   return (bool) db_fetch_object(db_query("SHOW COLUMNS FROM {". db_escape_table($table) ."} LIKE '". db_escape_table($column) ."'"));
+diff --git a/includes/database.mysqli.inc b/includes/database.mysqli.inc
+index 70a9943..dc66329 100644
+--- a/includes/database.mysqli.inc
++++ b/includes/database.mysqli.inc
+@@ -79,8 +79,15 @@ function db_connect($url) {
+     _db_error_page(mysqli_connect_error());
+   }
+ 
+-  // Force UTF-8.
+-  mysqli_query($connection, 'SET NAMES "utf8"');
++  // Force MySQL to use the UTF-8 character set. Also set the collation, if a
++  // certain one has been set; otherwise, MySQL defaults to 'utf8_general_ci'
++  // for UTF-8.
++  if (!empty($GLOBALS['db_collation'])) {
++    mysqli_query($connection, 'SET NAMES utf8 COLLATE ' . $GLOBALS['db_collation']);
++  }
++  else {
++    mysqli_query($connection, 'SET NAMES utf8');
++  }
+ 
+   return $connection;
+ }
+@@ -339,6 +346,12 @@ function db_unlock_tables() {
+ 
+ /**
+  * Check if a table exists.
++ *
++ * @param $table
++ *   The name of the table.
++ *
++ * @return
++ *   TRUE if the table exists, and FALSE if the table does not exist.
+  */
+ function db_table_exists($table) {
+   return (bool) db_fetch_object(db_query("SHOW TABLES LIKE '{". db_escape_table($table) ."}'"));
+@@ -346,6 +359,14 @@ function db_table_exists($table) {
+ 
+ /**
+  * Check if a column exists in the given table.
++ *
++ * @param $table
++ *   The name of the table.
++ * @param $column
++ *   The name of the column.
++ *
++ * @return
++ *   TRUE if the column exists, and FALSE if the column does not exist.
+  */
+ function db_column_exists($table, $column) {
+   return (bool) db_fetch_object(db_query("SHOW COLUMNS FROM {". db_escape_table($table) ."} LIKE '". db_escape_table($column) ."'"));
+diff --git a/includes/database.pgsql.inc b/includes/database.pgsql.inc
+index 4a07486..0d6f309 100644
+--- a/includes/database.pgsql.inc
++++ b/includes/database.pgsql.inc
+@@ -383,6 +383,12 @@ function db_unlock_tables() {
+ 
+ /**
+  * Check if a table exists.
++ *
++ * @param $table
++ *   The name of the table.
++ *
++ * @return
++ *   TRUE if the table exists, and FALSE if the table does not exist.
+  */
+ function db_table_exists($table) {
+   return (bool) db_result(db_query("SELECT COUNT(*) FROM pg_class WHERE relname = '{". db_escape_table($table) ."}'"));
+@@ -390,6 +396,14 @@ function db_table_exists($table) {
+ 
+ /**
+  * Check if a column exists in the given table.
++ *
++ * @param $table
++ *   The name of the table.
++ * @param $column
++ *   The name of the column.
++ *
++ * @return
++ *   TRUE if the column exists, and FALSE if the column does not exist.
+  */
+ function db_column_exists($table, $column) {
+   return (bool) db_result(db_query("SELECT COUNT(pg_attribute.attname) FROM pg_class, pg_attribute WHERE pg_attribute.attrelid = pg_class.oid AND pg_class.relname = '{". db_escape_table($table) ."}' AND attname = '". db_escape_table($column) ."'"));
+@@ -643,7 +657,7 @@ function db_drop_table(&$ret, $table) {
+  *   created field will be set to the value of the key in all rows.
+  *   This is most useful for creating NOT NULL columns with no default
+  *   value in existing tables.
+- * @param $keys_new
++ * @param $new_keys
+  *   Optional keys and indexes specification to be created on the
+  *   table along with adding the field. The format is the same as a
+  *   table specification but without the 'fields' element.  If you are
+diff --git a/includes/file.inc b/includes/file.inc
+index cccc68d..b576a21 100644
+--- a/includes/file.inc
++++ b/includes/file.inc
+@@ -487,17 +487,17 @@ function file_space_used($uid = NULL) {
+ }
+ 
+ /**
+- * Saves a file upload to a new location. The source file is validated as a
+- * proper upload and handled as such.
++ * Saves a file upload to a new location.
+  *
+- * The file will be added to the files table as a temporary file. Temporary files
+- * are periodically cleaned. To make the file permanent file call
++ * The source file is validated as a proper upload and handled as such.
++ * The file will be added to the files table as a temporary file. Temporary
++ * files are periodically cleaned. To make the file permanent file call
+  * file_set_status() to change its status.
+  *
+  * @param $source
+  *   A string specifying the name of the upload field to save.
+  * @param $validators
+- *   An optional, associative array of callback functions used to validate the
++ *   (optional) An associative array of callback functions used to validate the
+  *   file. The keys are function names and the values arrays of callback
+  *   parameters which will be passed in after the file object. The
+  *   functions should return an array of error messages; an empty array
+@@ -507,9 +507,12 @@ function file_space_used($uid = NULL) {
+  *   A string containing the directory $source should be copied to. If this is
+  *   not provided or is not writable, the temporary directory will be used.
+  * @param $replace
+- *   A boolean indicating whether an existing file of the same name in the
+- *   destination directory should overwritten. A false value will generate a
+- *   new, unique filename in the destination directory.
++ *   Replace behavior when the destination file already exists:
++ *   - FILE_EXISTS_REPLACE: Replace the existing file.
++ *   - FILE_EXISTS_RENAME: Append _{incrementing number} until the filename
++ *     is unique.
++ *   - FILE_EXISTS_ERROR: Do nothing and return FALSE.
++ *
+  * @return
+  *   An object containing the file information, or 0 in the event of an error.
+  */
+diff --git a/includes/form.inc b/includes/form.inc
+index be16c0f..6432cab 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -62,7 +62,9 @@
+  *   Any additional arguments are passed on to the functions called by
+  *   drupal_get_form(), including the unique form constructor function.
+  *   For example, the node_edit form requires that a node object be passed
+- *   in here when it is called.
++ *   in here when it is called. These are available to implementations of
++ *   hook_form_alter() and hook_form_FORM_ID_alter() as the array
++ *   $form['#parameters'].
+  * @return
+  *   The rendered form.
+  */
+diff --git a/includes/image.inc b/includes/image.inc
+index 03f5278..507594b 100644
+--- a/includes/image.inc
++++ b/includes/image.inc
+@@ -114,7 +114,7 @@ function image_toolkit_invoke($method, $params = array()) {
+  *    'file_size' - File size in bytes.
+  */
+ function image_get_info($file) {
+-  if (!is_file($file)) {
++  if (!is_file($file) && !is_uploaded_file($filepath)) {
+     return FALSE;
+   }
+ 
+diff --git a/includes/menu.inc b/includes/menu.inc
+index 62efede..9d15aef 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -550,7 +550,7 @@ function _menu_item_localize(&$item, $map, $link_translate = FALSE) {
+  *   path from the menu table, for example tabs.
+  * @return
+  *   Returns the map with objects loaded as defined in the
+- *   $item['load_functions. $item['access'] becomes TRUE if the item is
++ *   $item['load_functions']. $item['access'] becomes TRUE if the item is
+  *   accessible, FALSE otherwise. $item['href'] is set according to the map.
+  *   If an error occurs during calling the load_functions (like trying to load
+  *   a non existing node) then this function return FALSE.
+@@ -1509,14 +1509,15 @@ function menu_set_active_item($path) {
+  * @param $new_trail
+  *   Menu trail to set, or NULL to use previously-set or calculated trail. If
+  *   supplying a trail, use the same format as the return value (see below).
++ *
+  * @return
+  *   Path to menu root of the current page, as an array of menu link items,
+  *   starting with the site's home page. Each link item is an associative array
+  *   with the following components:
+- *   - 'title': Title of the item.
+- *   - 'href': Drupal path of the item.
+- *   - 'localized_options': Options for passing into the l() function.
+- *   - 'type': A menu type constant, such as MENU_DEFAULT_LOCAL_TASK, or 0 to
++ *   - title: Title of the item.
++ *   - href: Drupal path of the item.
++ *   - localized_options: Options for passing into the l() function.
++ *   - type: A menu type constant, such as MENU_DEFAULT_LOCAL_TASK, or 0 to
+  *     indicate it's not really in the menu (used for the home page item).
+  *   If $new_trail is supplied, the value is saved in a static variable and
+  *   returned. If $new_trail is not supplied, and there is a saved value from
+@@ -1886,13 +1887,14 @@ function _menu_delete_item($item, $force = FALSE) {
+  * @param $item
+  *   An array representing a menu link item. The only mandatory keys are
+  *   link_path and link_title. Possible keys are:
+- *   - menu_name   default is navigation
+- *   - weight      default is 0
+- *   - expanded    whether the item is expanded.
+- *   - options     An array of options, @see l for more.
+- *   - mlid        Set to an existing value, or 0 or NULL to insert a new link.
+- *   - plid        The mlid of the parent.
+- *   - router_path The path of the relevant router item.
++ *   - menu_name: Default is navigation.
++ *   - weight: Default is 0.
++ *   - expanded: Whether the item is expanded.
++ *   - options: An array of options, see l() for more.
++ *   - mlid: Set to an existing value, or 0 or NULL to insert a new link.
++ *   - plid: The mlid of the parent.
++ *   - router_path: The path of the relevant router item.
++ *
+  * @return
+  *   The mlid of the saved menu link, or FALSE if the menu link could not be 
+  *   saved.
+@@ -2430,6 +2432,7 @@ function _menu_router_build($callbacks) {
+       'file' => '',
+       'file path' => '',
+       'include file' => '',
++      'module' => '',
+     );
+ 
+     // Calculate out the file to be included for each callback, if any.
+diff --git a/includes/path.inc b/includes/path.inc
+index d31e58f..16bef2e 100644
+--- a/includes/path.inc
++++ b/includes/path.inc
+@@ -74,7 +74,7 @@ function drupal_lookup_path($action, $path = '', $path_language = '') {
+     // isn't a path that has this alias
+     elseif ($action == 'source' && !isset($no_src[$path_language][$path])) {
+       // Look for the value $path within the cached $map
+-      $src = '';
++      $src = FALSE;
+       if (!isset($map[$path_language]) || !($src = array_search($path, $map[$path_language]))) {
+         // Get the most fitting result falling back with alias without language
+         if ($src = db_result(db_query("SELECT src FROM {url_alias} WHERE dst = '%s' AND language IN('%s', '') ORDER BY language DESC, pid DESC", $path, $path_language))) {
+@@ -152,10 +152,13 @@ function drupal_get_normal_path($path, $path_language = '') {
+  * @param $index
+  *   The index of the component, where each component is separated by a '/'
+  *   (forward-slash), and where the first component has an index of 0 (zero).
++ * @param $path
++ *   A path to break into components. Defaults to the path of the current page.
+  *
+  * @return
+  *   The component specified by $index, or NULL if the specified component was
+- *   not found.
++ *   not found. If called without arguments, it returns an array containing all
++ *   the components of the current path.
+  */
+ function arg($index = NULL, $path = NULL) {
+   static $arguments;
+diff --git a/includes/theme.inc b/includes/theme.inc
+index 665a0f7..e32732d 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -1244,6 +1244,7 @@ function theme_links($links, $attributes = array('class' => 'links')) {
+  *
+  * @param $path
+  *   Either the path of the image file (relative to base_path()) or a full URL.
++ *   If this is a full URL, $getsize must be set to FALSE or nothing will be returned.
+  * @param $alt
+  *   The alternative text for text-based browsers.
+  * @param $title
+@@ -1252,6 +1253,8 @@ function theme_links($links, $attributes = array('class' => 'links')) {
+  *   Associative array of attributes to be placed in the img tag.
+  * @param $getsize
+  *   If set to TRUE, the image's dimension are fetched and added as width/height attributes.
++ *   Defaults to TRUE. Must be set to FALSE if $path is a full URL.
++ * 
+  * @return
+  *   A string containing the image tag.
+  */
+diff --git a/includes/unicode.entities.inc b/includes/unicode.entities.inc
+new file mode 100644
+index 0000000..486fd97
+--- /dev/null
++++ b/includes/unicode.entities.inc
+@@ -0,0 +1,266 @@
++<?php
++// $Id $
++
++/**
++ * @file
++ * (X)HTML entities, as defined in HTML 4.01.
++ *
++ * @see http://www.w3.org/TR/html401/sgml/entities.html
++ */
++
++$html_entities = array(
++  '&Aacute;' => 'Á',
++  '&aacute;' => 'á',
++  '&Acirc;' => 'Â',
++  '&acirc;' => 'â',
++  '&acute;' => '´',
++  '&AElig;' => 'Æ',
++  '&aelig;' => 'æ',
++  '&Agrave;' => 'À',
++  '&agrave;' => 'à',
++  '&alefsym;' => 'ℵ',
++  '&Alpha;' => 'Α',
++  '&alpha;' => 'α',
++  '&amp;' => '&',
++  '&and;' => '∧',
++  '&ang;' => '∠',
++  '&Aring;' => 'Å',
++  '&aring;' => 'å',
++  '&asymp;' => '≈',
++  '&Atilde;' => 'Ã',
++  '&atilde;' => 'ã',
++  '&Auml;' => 'Ä',
++  '&auml;' => 'ä',
++  '&bdquo;' => '„',
++  '&Beta;' => 'Β',
++  '&beta;' => 'β',
++  '&brvbar;' => '¦',
++  '&bull;' => '•',
++  '&cap;' => '∩',
++  '&Ccedil;' => 'Ç',
++  '&ccedil;' => 'ç',
++  '&cedil;' => '¸',
++  '&cent;' => '¢',
++  '&Chi;' => 'Χ',
++  '&chi;' => 'χ',
++  '&circ;' => 'ˆ',
++  '&clubs;' => '♣',
++  '&cong;' => '≅',
++  '&copy;' => '©',
++  '&crarr;' => '↵',
++  '&cup;' => '∪',
++  '&curren;' => '¤',
++  '&dagger;' => '†',
++  '&Dagger;' => '‡',
++  '&darr;' => '↓',
++  '&dArr;' => '⇓',
++  '&deg;' => '°',
++  '&Delta;' => 'Δ',
++  '&delta;' => 'δ',
++  '&diams;' => '♦',
++  '&divide;' => '÷',
++  '&Eacute;' => 'É',
++  '&eacute;' => 'é',
++  '&Ecirc;' => 'Ê',
++  '&ecirc;' => 'ê',
++  '&Egrave;' => 'È',
++  '&egrave;' => 'è',
++  '&empty;' => '∅',
++  '&emsp;' => ' ',
++  '&ensp;' => ' ',
++  '&Epsilon;' => 'Ε',
++  '&epsilon;' => 'ε',
++  '&equiv;' => '≡',
++  '&Eta;' => 'Η',
++  '&eta;' => 'η',
++  '&ETH;' => 'Ð',
++  '&eth;' => 'ð',
++  '&Euml;' => 'Ë',
++  '&euml;' => 'ë',
++  '&euro;' => '€',
++  '&exist;' => '∃',
++  '&fnof;' => 'ƒ',
++  '&forall;' => '∀',
++  '&frac12;' => '½',
++  '&frac14;' => '¼',
++  '&frac34;' => '¾',
++  '&frasl;' => '⁄',
++  '&Gamma;' => 'Γ',
++  '&gamma;' => 'γ',
++  '&ge;' => '≥',
++  '&harr;' => '↔',
++  '&hArr;' => '⇔',
++  '&hearts;' => '♥',
++  '&hellip;' => '…',
++  '&Iacute;' => 'Í',
++  '&iacute;' => 'í',
++  '&Icirc;' => 'Î',
++  '&icirc;' => 'î',
++  '&iexcl;' => '¡',
++  '&Igrave;' => 'Ì',
++  '&igrave;' => 'ì',
++  '&image;' => 'ℑ',
++  '&infin;' => '∞',
++  '&int;' => '∫',
++  '&Iota;' => 'Ι',
++  '&iota;' => 'ι',
++  '&iquest;' => '¿',
++  '&isin;' => '∈',
++  '&Iuml;' => 'Ï',
++  '&iuml;' => 'ï',
++  '&Kappa;' => 'Κ',
++  '&kappa;' => 'κ',
++  '&Lambda;' => 'Λ',
++  '&lambda;' => 'λ',
++  '&lang;' => '〈',
++  '&laquo;' => '«',
++  '&larr;' => '←',
++  '&lArr;' => '⇐',
++  '&lceil;' => '⌈',
++  '&ldquo;' => '“',
++  '&le;' => '≤',
++  '&lfloor;' => '⌊',
++  '&lowast;' => '∗',
++  '&loz;' => '◊',
++  '&lrm;' => '‎',
++  '&lsaquo;' => '‹',
++  '&lsquo;' => '‘',
++  '&macr;' => '¯',
++  '&mdash;' => '—',
++  '&micro;' => 'µ',
++  '&middot;' => '·',
++  '&minus;' => '−',
++  '&Mu;' => 'Μ',
++  '&mu;' => 'μ',
++  '&nabla;' => '∇',
++  '&nbsp;' => ' ',
++  '&ndash;' => '–',
++  '&ne;' => '≠',
++  '&ni;' => '∋',
++  '&not;' => '¬',
++  '&notin;' => '∉',
++  '&nsub;' => '⊄',
++  '&Ntilde;' => 'Ñ',
++  '&ntilde;' => 'ñ',
++  '&Nu;' => 'Ν',
++  '&nu;' => 'ν',
++  '&Oacute;' => 'Ó',
++  '&oacute;' => 'ó',
++  '&Ocirc;' => 'Ô',
++  '&ocirc;' => 'ô',
++  '&OElig;' => 'Œ',
++  '&oelig;' => 'œ',
++  '&Ograve;' => 'Ò',
++  '&ograve;' => 'ò',
++  '&oline;' => '‾',
++  '&Omega;' => 'Ω',
++  '&omega;' => 'ω',
++  '&Omicron;' => 'Ο',
++  '&omicron;' => 'ο',
++  '&oplus;' => '⊕',
++  '&or;' => '∨',
++  '&ordf;' => 'ª',
++  '&ordm;' => 'º',
++  '&Oslash;' => 'Ø',
++  '&oslash;' => 'ø',
++  '&Otilde;' => 'Õ',
++  '&otilde;' => 'õ',
++  '&otimes;' => '⊗',
++  '&Ouml;' => 'Ö',
++  '&ouml;' => 'ö',
++  '&para;' => '¶',
++  '&part;' => '∂',
++  '&permil;' => '‰',
++  '&perp;' => '⊥',
++  '&Phi;' => 'Φ',
++  '&phi;' => 'φ',
++  '&Pi;' => 'Π',
++  '&pi;' => 'π',
++  '&piv;' => 'ϖ',
++  '&plusmn;' => '±',
++  '&pound;' => '£',
++  '&prime;' => '′',
++  '&Prime;' => '″',
++  '&prod;' => '∏',
++  '&prop;' => '∝',
++  '&Psi;' => 'Ψ',
++  '&psi;' => 'ψ',
++  '&radic;' => '√',
++  '&rang;' => '〉',
++  '&raquo;' => '»',
++  '&rarr;' => '→',
++  '&rArr;' => '⇒',
++  '&rceil;' => '⌉',
++  '&rdquo;' => '”',
++  '&real;' => 'ℜ',
++  '&reg;' => '®',
++  '&rfloor;' => '⌋',
++  '&Rho;' => 'Ρ',
++  '&rho;' => 'ρ',
++  '&rlm;' => '‏',
++  '&rsaquo;' => '›',
++  '&rsquo;' => '’',
++  '&sbquo;' => '‚',
++  '&Scaron;' => 'Š',
++  '&scaron;' => 'š',
++  '&sdot;' => '⋅',
++  '&sect;' => '§',
++  '&shy;' => '­',
++  '&Sigma;' => 'Σ',
++  '&sigma;' => 'σ',
++  '&sigmaf;' => 'ς',
++  '&sim;' => '∼',
++  '&spades;' => '♠',
++  '&sub;' => '⊂',
++  '&sube;' => '⊆',
++  '&sum;' => '∑',
++  '&sup1;' => '¹',
++  '&sup2;' => '²',
++  '&sup3;' => '³',
++  '&sup;' => '⊃',
++  '&supe;' => '⊇',
++  '&szlig;' => 'ß',
++  '&Tau;' => 'Τ',
++  '&tau;' => 'τ',
++  '&there4;' => '∴',
++  '&Theta;' => 'Θ',
++  '&theta;' => 'θ',
++  '&thetasym;' => 'ϑ',
++  '&thinsp;' => ' ',
++  '&THORN;' => 'Þ',
++  '&thorn;' => 'þ',
++  '&tilde;' => '˜',
++  '&times;' => '×',
++  '&trade;' => '™',
++  '&Uacute;' => 'Ú',
++  '&uacute;' => 'ú',
++  '&uarr;' => '↑',
++  '&uArr;' => '⇑',
++  '&Ucirc;' => 'Û',
++  '&ucirc;' => 'û',
++  '&Ugrave;' => 'Ù',
++  '&ugrave;' => 'ù',
++  '&uml;' => '¨',
++  '&upsih;' => 'ϒ',
++  '&Upsilon;' => 'Υ',
++  '&upsilon;' => 'υ',
++  '&Uuml;' => 'Ü',
++  '&uuml;' => 'ü',
++  '&weierp;' => '℘',
++  '&Xi;' => 'Ξ',
++  '&xi;' => 'ξ',
++  '&Yacute;' => 'Ý',
++  '&yacute;' => 'ý',
++  '&yen;' => '¥',
++  '&yuml;' => 'ÿ',
++  '&Yuml;' => 'Ÿ',
++  '&Zeta;' => 'Ζ',
++  '&zeta;' => 'ζ',
++  '&zwj;' => '‍',
++  '&zwnj;' => '‌',
++  '&gt;' => '>',
++  '&lt;' => '<',
++  '&quot;' => '"',
++  // Add apostrophe (XML).
++  '&apos;' => "'",
++);
+diff --git a/includes/unicode.inc b/includes/unicode.inc
+index 2e7cb12..311eaff 100644
+--- a/includes/unicode.inc
++++ b/includes/unicode.inc
+@@ -335,30 +335,30 @@ function _mime_header_decode($matches) {
+  *   The input $text, with all HTML entities decoded once.
+  */
+ function decode_entities($text, $exclude = array()) {
+-  static $table;
+-  // We store named entities in a table for quick processing.
+-  if (!isset($table)) {
+-    // Get all named HTML entities.
+-    $table = array_flip(get_html_translation_table(HTML_ENTITIES));
+-    // PHP gives us ISO-8859-1 data, we need UTF-8.
+-    $table = array_map('utf8_encode', $table);
+-    // Add apostrophe (XML)
+-    $table['&apos;'] = "'";
+-  }
+-  $newtable = array_diff($table, $exclude);
+-
+-  // Use a regexp to select all entities in one pass, to avoid decoding double-escaped entities twice.
+-  return preg_replace('/&(#x?)?([A-Za-z0-9]+);/e', '_decode_entities("$1", "$2", "$0", $newtable, $exclude)', $text);
++  static $html_entities;
++  if (!isset($html_entities)) {
++    include_once './includes/unicode.entities.inc';
++  }
++
++  // Flip the exclude list so that we can do quick lookups later.
++  $exclude = array_flip($exclude);
++
++  // Use a regexp to select all entities in one pass, to avoid decoding 
++  // double-escaped entities twice. The PREG_REPLACE_EVAL modifier 'e' is
++  // being used to allow for a callback (see 
++  // http://php.net/manual/en/reference.pcre.pattern.modifiers).
++  return preg_replace('/&(#x?)?([A-Za-z0-9]+);/e', '_decode_entities("$1", "$2", "$0", $html_entities, $exclude)', $text);
+ }
+ 
+ /**
+  * Helper function for decode_entities
+  */
+-function _decode_entities($prefix, $codepoint, $original, &$table, &$exclude) {
++function _decode_entities($prefix, $codepoint, $original, &$html_entities, &$exclude) {
+   // Named entity
+   if (!$prefix) {
+-    if (isset($table[$original])) {
+-      return $table[$original];
++    // A named entity not in the exclude list.
++    if (isset($html_entities[$original]) && !isset($exclude[$html_entities[$original]])) {
++      return $html_entities[$original];
+     }
+     else {
+       return $original;
+@@ -392,7 +392,7 @@ function _decode_entities($prefix, $codepoint, $original, &$table, &$exclude) {
+          . chr(0x80 | ( $codepoint        & 0x3F));
+   }
+   // Check for excluded characters
+-  if (in_array($str, $exclude)) {
++  if (isset($exclude[$str])) {
+     return $original;
+   }
+   else {
+diff --git a/install.php b/install.php
+index 0804017..6022170 100644
+--- a/install.php
++++ b/install.php
+@@ -529,7 +529,7 @@ function install_select_locale($profilename) {
+       drupal_set_title(st('Choose language'));
+       if (!empty($_GET['localize'])) {
+         $output = '<p>'. st('With the addition of an appropriate translation package, this installer is capable of proceeding in another language of your choice. To install and use Drupal in a language other than English:') .'</p>';
+-        $output .= '<ul><li>'. st('Determine if <a href="@translations" target="_blank">a translation of this Drupal version</a> is available in your language of choice. A translation is provided via a translation package; each translation package enables the display of a specific version of Drupal in a specific language. Not all languages are available for every version of Drupal.', array('@translations' => 'http://drupal.org/project/translations')) .'</li>';
++        $output .= '<ul><li>'. st('Determine if <a href="@translations" target="_blank">a translation of this Drupal version</a> is available in your language of choice. A translation is provided via a translation package; each translation package enables the display of a specific version of Drupal in a specific language. Not all languages are available for every version of Drupal.', array('@translations' => 'http://localize.drupal.org')) .'</li>';
+         $output .= '<li>'. st('If an alternative translation package of your choice is available, download and extract its contents to your Drupal root directory.') .'</li>';
+         $output .= '<li>'. st('Return to choose language using the second link below and select your desired language from the displayed list. Reloading the page allows the list to automatically adjust to the presence of new translation packages.') .'</li>';
+         $output .= '</ul><p>'. st('Alternatively, to install and use Drupal in English, or to defer the selection of an alternative language until after installation, select the first link below.') .'</p>';
+diff --git a/modules/dblog/dblog.admin.inc b/modules/dblog/dblog.admin.inc
+index fe27147..45ac998 100644
+--- a/modules/dblog/dblog.admin.inc
++++ b/modules/dblog/dblog.admin.inc
+@@ -215,7 +215,7 @@ function dblog_filters() {
+   $filters = array();
+ 
+   foreach (_dblog_get_message_types() as $type) {
+-    $types[$type] = $type;
++    $types[$type] = t($type);
+   }
+ 
+   if (!empty($types)) {
+diff --git a/modules/filter/filter.module b/modules/filter/filter.module
+index d9e55a3..7efbe35 100644
+--- a/modules/filter/filter.module
++++ b/modules/filter/filter.module
+@@ -1219,7 +1219,7 @@ function _filter_xss_attributes($attr) {
+ function filter_xss_bad_protocol($string, $decode = TRUE) {
+   static $allowed_protocols;
+   if (!isset($allowed_protocols)) {
+-    $allowed_protocols = array_flip(variable_get('filter_allowed_protocols', array('http', 'https', 'ftp', 'news', 'nntp', 'telnet', 'mailto', 'irc', 'ssh', 'sftp', 'webcal', 'rtsp')));
++    $allowed_protocols = array_flip(variable_get('filter_allowed_protocols', array('http', 'https', 'ftp', 'news', 'nntp', 'tel', 'telnet', 'mailto', 'irc', 'ssh', 'sftp', 'webcal', 'rtsp')));
+   }
+ 
+   // Get the plain text representation of the attribute value (i.e. its meaning).
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index 5477e54..9c3ca19 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -255,7 +255,7 @@ function forum_nodeapi(&$node, $op, $teaser, $page) {
+             $node->tid = $term_id;
+           }
+         }
+-        $old_tid = db_result(db_query_range("SELECT t.tid FROM {term_node} t INNER JOIN {node} n ON t.vid = n.vid WHERE n.nid = %d ORDER BY t.vid DESC", $node->nid, 0, 1));
++        $old_tid = db_result(db_query_range("SELECT f.tid FROM {forum} f INNER JOIN {node} n ON f.vid = n.vid WHERE n.nid = %d ORDER BY f.vid DESC", $node->nid, 0, 1));
+         if ($old_tid && isset($node->tid) && ($node->tid != $old_tid) && !empty($node->shadow)) {
+           // A shadow copy needs to be created. Retain new term and add old term.
+           $node->taxonomy[] = $old_tid;
+diff --git a/modules/locale/locale.module b/modules/locale/locale.module
+index a69205d..9f9665c 100644
+--- a/modules/locale/locale.module
++++ b/modules/locale/locale.module
+@@ -25,14 +25,14 @@ function locale_help($path, $arg) {
+       $output .= '<p>'. t('Beyond translation of the Drupal interface, the locale module provides a feature set tailored to the needs of a multi-lingual site. Language negotiation allows your site to automatically change language based on the domain or path used for each request. Users may (optionally) select their preferred language on their <em>My account</em> page, and your site can be configured to honor a web browser\'s preferred language settings. Your site content can be created in (and translated to) any enabled language, and each post may have a language-appropriate alias for each of its translations. The locale module works in concert with the <a href="@content-help">content translation module</a> to manage translated content.', array('@content-help' => url('admin/help/translation'))) .'</p>';
+       $output .= '<p>'. t('Translations may be provided by:') .'</p>';
+       $output .= '<ul><li>'. t("translating the original text via the locale module's integrated web interface, or") .'</li>';
+-      $output .= '<li>'. t('importing files from a set of existing translations, known as a translation package. A translation package enables the display of a specific version of Drupal in a specific language, and contain files in the Gettext Portable Object (<em>.po</em>) format. Although not all languages are available for every version of Drupal, translation packages for many languages are available for download from the <a href="@translations">Drupal translation page</a>.', array('@translations' => 'http://drupal.org/project/translations')) .'</li></ul>';
++      $output .= '<li>'. t('importing files from a set of existing translations, known as a translation package. A translation package enables the display of a specific version of Drupal in a specific language, and contain files in the Gettext Portable Object (<em>.po</em>) format. Although not all languages are available for every version of Drupal, translation packages for many languages are available for download from the <a href="@translations">Drupal translation page</a>.', array('@translations' => 'http://localize.drupal.org')) .'</li></ul>';
+       $output .= '<p>'. t('If an existing translation package does not meet your needs, the Gettext Portable Object (<em>.po</em>) files within a package may be modified, or new <em>.po</em> files may be created, using a desktop Gettext editor. The locale module\'s <a href="@import">import</a> feature allows the translated strings from a new or modified <em>.po</em> file to be added to your site. The locale module\'s <a href="@export">export</a> feature generates files from your site\'s translated strings, that can either be shared with others or edited offline by a Gettext translation editor.', array('@import' => url('admin/build/translate/import'), '@export' => url('admin/build/translate/export'))) .'</p>';
+       $output .= '<p>'. t('For more information, see the online handbook entry for <a href="@locale">Locale module</a>.', array('@locale' => 'http://drupal.org/handbook/modules/locale/')) .'</p>';
+       return $output;
+     case 'admin/settings/language':
+       $output = '<p>'. t("This page provides an overview of your site's enabled languages. If multiple languages are available and enabled, the text on your site interface may be translated, registered users may select their preferred language on the <em>My account</em> page, and site authors may indicate a specific language when creating posts. The site's default language is used for anonymous visitors and for users who have not selected a preferred language.") .'</p>';
+       $output .= '<p>'. t('For each language available on the site, use the <em>edit</em> link to configure language details, including name, an optional language-specific path or domain, and whether the language is natively presented either left-to-right or right-to-left. These languages also appear in the <em>Language</em> selection when creating a post of a content type with multilingual support.') .'</p>';
+-      $output .= '<p>'. t('Use the <a href="@add-language">add language page</a> to enable additional languages (and automatically import files from a translation package, if available), the <a href="@search">translate interface page</a> to locate strings for manual translation, or the <a href="@import">import page</a> to add translations from individual <em>.po</em> files. A number of contributed translation packages containing <em>.po</em> files are available on the <a href="@translations">Drupal.org translations page</a>.', array('@add-language' => url('admin/settings/language/add'), '@search' => url('admin/build/translate/search'), '@import' => url('admin/build/translate/import'), '@translations' => 'http://drupal.org/project/translations')) .'</p>';
++      $output .= '<p>'. t('Use the <a href="@add-language">add language page</a> to enable additional languages (and automatically import files from a translation package, if available), the <a href="@search">translate interface page</a> to locate strings for manual translation, or the <a href="@import">import page</a> to add translations from individual <em>.po</em> files. A number of contributed translation packages containing <em>.po</em> files are available on the <a href="@translations">Drupal.org translations page</a>.', array('@add-language' => url('admin/settings/language/add'), '@search' => url('admin/build/translate/search'), '@import' => url('admin/build/translate/import'), '@translations' => 'http://localize.drupal.org')) .'</p>';
+       return $output;
+     case 'admin/settings/language/add':
+       return '<p>'. t('Add all languages to be supported by your site. If your desired language is not available in the <em>Language name</em> drop-down, click <em>Custom language</em> and provide a language code and other details manually. When providing a language code manually, be sure to enter a standardized language code, since this code may be used by browsers to determine an appropriate display language.') .'</p>';
+@@ -50,7 +50,7 @@ function locale_help($path, $arg) {
+       return $output;
+     case 'admin/build/translate/import':
+       $output = '<p>'. t('This page imports the translated strings contained in an individual Gettext Portable Object (<em>.po</em>) file. Normally distributed as part of a translation package (each translation package may contain several <em>.po</em> files), a <em>.po</em> file may need to be imported after off-line editing in a Gettext translation editor. Importing an individual <em>.po</em> file may be a lengthy process.') .'</p>';
+-      $output .= '<p>'. t('Note that the <em>.po</em> files within a translation package are imported automatically (if available) when new modules or themes are enabled, or as new languages are added. Since this page only allows the import of one <em>.po</em> file at a time, it may be simpler to download and extract a translation package into your Drupal installation directory and <a href="@language-add">add the language</a> (which automatically imports all <em>.po</em> files within the package). Translation packages are available for download on the <a href="@translations">Drupal translation page</a>.', array('@language-add' => url('admin/settings/language/add'), '@translations' => 'http://drupal.org/project/translations')) .'</p>';
++      $output .= '<p>'. t('Note that the <em>.po</em> files within a translation package are imported automatically (if available) when new modules or themes are enabled, or as new languages are added. Since this page only allows the import of one <em>.po</em> file at a time, it may be simpler to download and extract a translation package into your Drupal installation directory and <a href="@language-add">add the language</a> (which automatically imports all <em>.po</em> files within the package). Translation packages are available for download on the <a href="@translations">Drupal translation page</a>.', array('@language-add' => url('admin/settings/language/add'), '@translations' => 'http://localize.drupal.org')) .'</p>';
+       return $output;
+     case 'admin/build/translate/export':
+       return '<p>'. t('This page exports the translated strings used by your site. An export file may be in Gettext Portable Object (<em>.po</em>) form, which includes both the original string and the translation (used to share translations with others), or in Gettext Portable Object Template (<em>.pot</em>) form, which includes the original strings only (used to create new translations with a Gettext translation editor).') .'</p>';
+diff --git a/modules/node/node.module b/modules/node/node.module
+index 7f0e036..3e27431 100644
+--- a/modules/node/node.module
++++ b/modules/node/node.module
+@@ -816,7 +816,13 @@ function node_validate($node, $form = array()) {
+ }
+ 
+ /**
+- * Prepare node for save and allow modules to make changes.
++ * Prepares a node for saving by populating teaser, author, and creation date.
++ *
++ * @param object|array $node
++ *   A node object or array.
++ *
++ * @return
++ *   A validated node object with a populated teaser, author, and creation date.
+  */
+ function node_submit($node) {
+   global $user;
+@@ -1233,9 +1239,9 @@ function node_search($op = 'search', $keys = NULL) {
+       if ($weight = (int)variable_get('node_rank_recent', 5)) {
+         // Exponential decay with half-life of 6 months, starting at last indexed node
+         // c.last_comment_timestamp may be NULL. Since both MAX(anynumber, NULL) and
+-        // GREATEST(anynumber, NULL) return NULL, we OR MAX(c.last_comment_timestamp) with 1
++        // GREATEST(anynumber, NULL) return NULL, we use COALESCE(MAX(c.last_comment_timestamp), 0)
+         // to prevent it from being NULL.
+-        $ranking[] = '%d * POW(2, (GREATEST(MAX(n.created), MAX(n.changed), MAX(c.last_comment_timestamp) || 1) - %d) * 6.43e-8)';
++        $ranking[] = '%d * POW(2, (GREATEST(MAX(n.created), MAX(n.changed), COALESCE(MAX(c.last_comment_timestamp), 0)) - %d) * 6.43e-8)';
+         $arguments2[] = $weight;
+         $arguments2[] = (int)variable_get('node_cron_last', 0);
+         $join2 .= ' LEFT JOIN {node_comment_statistics} c ON c.nid = i.sid';
+@@ -2688,7 +2694,7 @@ function node_save_action($node) {
+ function node_assign_owner_action(&$node, $context) {
+   $node->uid = $context['owner_uid'];
+   $owner_name = db_result(db_query("SELECT name FROM {users} WHERE uid = %d", $context['owner_uid']));
+-  watchdog('action', 'Changed owner of @type %title to uid %name.', array('@type' => node_get_types('type', $node), '%title' => $node->title, '%name' => $owner_name));
++  watchdog('action', 'Changed owner of @type %title to uid %name.', array('@type' => node_get_types('name', $node), '%title' => $node->title, '%name' => $owner_name));
+ }
+ 
+ function node_assign_owner_action_form($context) {
+diff --git a/modules/search/search.module b/modules/search/search.module
+index f96bd6f..7841edd 100644
+--- a/modules/search/search.module
++++ b/modules/search/search.module
+@@ -911,7 +911,7 @@ function _search_parse_query(&$word, &$scores, $not = FALSE) {
+  *              Default: 'ORDER BY score DESC'
+  *
+  * @return
+- *   An array of SIDs for the search results.
++ *   An array of objects for the search results.
+  *
+  * @ingroup search
+  */
+@@ -1018,7 +1018,7 @@ function search_get_keys() {
+  * @param $prompt
+  *   A piece of text to put before the form (e.g. "Enter your keywords")
+  * @return
+- *   An HTML string containing the search form.
++ *   A Form API array for the search form.
+  */
+ function search_form(&$form_state, $action = '', $keys = '', $type = NULL, $prompt = NULL) {
+ 
+diff --git a/modules/syslog/syslog.install b/modules/syslog/syslog.install
+new file mode 100644
+index 0000000..feebb63
+--- /dev/null
++++ b/modules/syslog/syslog.install
+@@ -0,0 +1,16 @@
++<?php
++// $Id$
++
++/**
++ * @file
++ * Install, update and uninstall functions for the syslog module.
++ */
++
++/**
++ * Implements hook_uninstall().
++ */
++function syslog_uninstall() {
++  variable_del('syslog_identity');
++  variable_del('syslog_facility');
++  variable_del('syslog_format');
++}
+diff --git a/modules/syslog/syslog.module b/modules/syslog/syslog.module
+index 5f92580..af4e448 100644
+--- a/modules/syslog/syslog.module
++++ b/modules/syslog/syslog.module
+@@ -38,6 +38,13 @@ function syslog_menu() {
+ }
+ 
+ function syslog_admin_settings() {
++  $form['syslog_identity'] = array(
++    '#type'          => 'textfield',
++    '#title'         => t('Syslog identity'),
++    '#default_value' => variable_get('syslog_identity', 'drupal'),
++    '#description'   => t('A string that will be prepended to every message logged to Syslog. If you have multiple sites logging to the same Syslog log file, a unique identity per site makes it easy to tell the log entries apart. For more information on syslog, see <a href="@syslog_help">Syslog help</a>.', array(
++      '@syslog_help' => url('admin/help/syslog'))),
++  );
+   $form['syslog_facility'] = array(
+     '#type'          => 'select',
+     '#title'         => t('Send events to this syslog facility'),
+@@ -73,7 +80,7 @@ function syslog_watchdog($entry) {
+ 
+   if (!$log_init) {
+     $log_init = TRUE;
+-    openlog('drupal', LOG_NDELAY, variable_get('syslog_facility', DEFAULT_SYSLOG_FACILITY));
++    openlog(variable_get('syslog_identity', 'drupal'), LOG_NDELAY, variable_get('syslog_facility', DEFAULT_SYSLOG_FACILITY));
+   }
+ 
+   syslog($entry['severity'], theme('syslog_format', $entry));
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index 798a5ff..109c9ff 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -503,17 +503,6 @@ function system_theme_settings(&$form_state, $key = '') {
+   }
+ 
+   if ($key) {
+-    // Include the theme's theme-settings.php file
+-    $filename = './'. str_replace("/$key.info", '', $themes[$key]->filename) .'/theme-settings.php';
+-    if (!file_exists($filename) and !empty($themes[$key]->info['base theme'])) {
+-      // If the theme doesn't have a theme-settings.php file, use the base theme's.
+-      $base = $themes[$key]->info['base theme'];
+-      $filename = './'. str_replace("/$base.info", '', $themes[$base]->filename) .'/theme-settings.php';
+-    }
+-    if (file_exists($filename)) {
+-      require_once $filename;
+-    }
+-
+     // Call engine-specific settings.
+     $function = $themes[$key]->prefix .'_engine_settings';
+     if (function_exists($function)) {
+@@ -523,16 +512,36 @@ function system_theme_settings(&$form_state, $key = '') {
+         $form['engine_specific'] = array_merge($form['engine_specific'], $group);
+       }
+     }
+-    // Call theme-specific settings.
+-    $function = $key .'_settings';
+-    if (!function_exists($function)) {
+-      $function = $themes[$key]->prefix .'_settings';
++
++    // Create a list which includes the current theme and all its base themes.
++    if (isset($themes[$key]->base_themes)) {
++      $theme_keys = array_keys($themes[$key]->base_themes);
++      $theme_keys[] = $key;
+     }
+-    if (function_exists($function)) {
+-      $group = $function($settings);
+-      if (!empty($group)) {
+-        $form['theme_specific'] = array('#type' => 'fieldset', '#title' => t('Theme-specific settings'), '#description' => t('These settings only exist for the %theme theme and all the styles based on it.', array('%theme' => $themes[$key]->info['name'])));
+-        $form['theme_specific'] = array_merge($form['theme_specific'], $group);
++    else {
++      $theme_keys = array($key);
++    }
++
++    // Process the theme and all its base themes.
++    foreach ($theme_keys as $theme) {
++      // Include the theme-settings.php file.
++      $filename = './'. str_replace("/$theme.info", '', $themes[$theme]->filename) .'/theme-settings.php';
++      if (file_exists($filename)) {
++        require_once $filename;
++      }
++
++      $function = $theme .'_settings';
++      if (!function_exists($function)) {
++        $function = $themes[$theme]->prefix .'_settings';
++      }
++      if (function_exists($function)) {
++        $group = $function($settings);
++        if (!empty($group)) {
++          $form['theme_specific']['#type'] = 'fieldset';
++          $form['theme_specific']['#title'] = t('Theme-specific settings');
++          $form['theme_specific']['#description'] = t('These settings only exist for the %theme theme and all the styles based on it.', array('%theme' => $themes[$theme]->info['name']));
++          $form['theme_specific'] = array_merge($form['theme_specific'], $group);
++        }
+       }
+     }
+   }
+@@ -628,15 +637,23 @@ function system_modules($form_state = array()) {
+   // Get current list of modules.
+   $files = module_rebuild_cache();
+ 
+-  uasort($files, 'system_sort_modules_by_info_name');
++  // Remove hidden modules from display list.
++  $visible_files = $files;
++  foreach ($visible_files as $filename => $file) {
++    if (!empty($file->info['hidden'])) {
++      unset($visible_files[$filename]);
++    }
++  }
++
++  uasort($visible_files, 'system_sort_modules_by_info_name');
+ 
+   if (!empty($form_state['storage'])) {
+-    return system_modules_confirm_form($files, $form_state['storage']);
++    return system_modules_confirm_form($visible_files, $form_state['storage']);
+   }
+   $dependencies = array();
+ 
+   // Store module list for validation callback.
+-  $form['validation_modules'] = array('#type' => 'value', '#value' => $files);
++  $form['validation_modules'] = array('#type' => 'value', '#value' => $visible_files);
+ 
+   // Create storage for disabled modules as browser will disable checkboxes.
+   $form['disabled_modules'] = array('#type' => 'value', '#value' => array());
+@@ -644,7 +661,7 @@ function system_modules($form_state = array()) {
+   // Traverse the files, checking for compatibility
+   $incompatible_core = array();
+   $incompatible_php = array();
+-  foreach ($files as $filename => $file) {
++  foreach ($visible_files as $filename => $file) {
+     // Ensure this module is compatible with this version of core.
+     if (!isset($file->info['core']) || $file->info['core'] != DRUPAL_CORE_COMPATIBILITY) {
+       $incompatible_core[$file->name] = $file->name;
+@@ -659,7 +676,7 @@ function system_modules($form_state = array()) {
+   $disabled = array();
+   $throttle = array();
+   // Traverse the files retrieved and build the form.
+-  foreach ($files as $filename => $file) {
++  foreach ($visible_files as $filename => $file) {
+     $form['name'][$filename] = array('#value' => $file->info['name']);
+     $form['version'][$filename] = array('#value' => $file->info['version']);
+     $form['description'][$filename] = array('#value' => t($file->info['description']));
+@@ -681,19 +698,20 @@ function system_modules($form_state = array()) {
+     // Check for missing dependencies.
+     if (is_array($file->info['dependencies'])) {
+       foreach ($file->info['dependencies'] as $dependency) {
+-        if (!isset($files[$dependency]) || !$files[$dependency]->status) {
+-          if (isset($files[$dependency])) {
+-            $dependencies[] = t('@module (<span class="admin-disabled">disabled</span>)', array('@module' => $files[$dependency]->info['name']));
++        if (!isset($files[$dependency])) {
++          $dependencies[] = t('@module (<span class="admin-missing">missing</span>)', array('@module' => drupal_ucfirst($dependency)));
++          $disabled[] = $filename;
++          $form['disabled_modules']['#value'][$filename] = FALSE;
++        }
++        // Only display visible modules.
++        elseif (isset($visible_files[$dependency])) {
++          if ($files[$dependency]->status) {
++            $dependencies[] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $files[$dependency]->info['name']));
+           }
+           else {
+-            $dependencies[] = t('@module (<span class="admin-missing">missing</span>)', array('@module' => drupal_ucfirst($dependency)));
+-            $disabled[] = $filename;
+-            $form['disabled_modules']['#value'][$filename] = FALSE;
++            $dependencies[] = t('@module (<span class="admin-disabled">disabled</span>)', array('@module' => $files[$dependency]->info['name']));
+           }
+         }
+-        else {
+-          $dependencies[] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $files[$dependency]->info['name']));
+-        }
+       }
+ 
+       // Add text for dependencies.
+@@ -709,13 +727,16 @@ function system_modules($form_state = array()) {
+     // Mark dependents disabled so user can not remove modules being depended on.
+     $dependents = array();
+     foreach ($file->info['dependents'] as $dependent) {
+-      if ($files[$dependent]->status == 1) {
+-        $dependents[] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $files[$dependent]->info['name']));
+-        $disabled[] = $filename;
+-        $form['disabled_modules']['#value'][$filename] = TRUE;
+-      }
+-      else {
+-        $dependents[] = t('@module (<span class="admin-disabled">disabled</span>)', array('@module' => $files[$dependent]->info['name']));
++      // Hidden modules are unset already.
++      if (isset($visible_files[$dependent])) {
++        if ($files[$dependent]->status == 1) {
++          $dependents[] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $files[$dependent]->info['name']));
++          $disabled[] = $filename;
++          $form['disabled_modules']['#value'][$filename] = TRUE;
++        }
++        else {
++          $dependents[] = t('@module (<span class="admin-disabled">disabled</span>)', array('@module' => $files[$dependent]->info['name']));
++        }
+       }
+     }
+ 
+diff --git a/modules/system/system.css b/modules/system/system.css
+index 2e14530..0195c07 100644
+--- a/modules/system/system.css
++++ b/modules/system/system.css
+@@ -189,7 +189,7 @@ dl.multiselect dd.b, dl.multiselect dd.b .form-item, dl.multiselect dd.b select
+   width: 14em;
+ }
+ dl.multiselect dd.a, dl.multiselect dd.a .form-item {
+-  width: 8em;
++  width: 10em;
+ }
+ dl.multiselect dt, dl.multiselect dd {
+   float: left; /* LTR */
+diff --git a/modules/system/system.install b/modules/system/system.install
+index db1c073..fe7a945 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -2672,27 +2672,31 @@ function system_update_6053() {
+ function system_update_6054() {
+   $ret = array();
+ 
+-  $schema['semaphore'] = array(
+-    'fields' => array(
+-      'name' => array(
+-        'type' => 'varchar',
+-        'length' => 255,
+-        'not null' => TRUE,
+-        'default' => ''),
+-      'value' => array(
+-        'type' => 'varchar',
+-        'length' => 255,
+-        'not null' => TRUE,
+-        'default' => ''),
+-      'expire' => array(
+-        'type' => 'float',
+-        'size' => 'big',
+-        'not null' => TRUE),
+-      ),
+-    'indexes' => array('expire' => array('expire')),
+-    'primary key' => array('name'),
+-  );
+-  db_create_table($ret, 'semaphore', $schema['semaphore']);
++  // The table may have already been added by update_fix_d6_requirements(), so
++  // check for its existence before creating.
++  if (!db_table_exists('semaphore')) {
++    $schema['semaphore'] = array(
++      'fields' => array(
++        'name' => array(
++          'type' => 'varchar',
++          'length' => 255,
++          'not null' => TRUE,
++          'default' => ''),
++        'value' => array(
++          'type' => 'varchar',
++          'length' => 255,
++          'not null' => TRUE,
++          'default' => ''),
++        'expire' => array(
++          'type' => 'float',
++          'size' => 'big',
++          'not null' => TRUE),
++        ),
++      'indexes' => array('expire' => array('expire')),
++      'primary key' => array('name'),
++    );
++    db_create_table($ret, 'semaphore', $schema['semaphore']);
++  }
+ 
+   return $ret;
+ }
+diff --git a/modules/system/system.module b/modules/system/system.module
+index c9d15c4..e55666c 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.19');
++define('VERSION', '6.20');
+ 
+ /**
+  * Core API compatibility.
+@@ -1923,7 +1923,7 @@ function _system_zonelist() {
+  */
+ function system_check_http_request() {
+   // Try to get the content of the front page via drupal_http_request().
+-  $result = drupal_http_request(url('', array('absolute' => TRUE)));
++  $result = drupal_http_request(url('', array('absolute' => TRUE)), array(), 'GET', NULL, 0);
+   // We only care that we get a http response - this means that Drupal
+   // can make a http request.
+   $works = isset($result->code) && ($result->code >= 100) && ($result->code < 600);
+diff --git a/modules/translation/translation.module b/modules/translation/translation.module
+index 5aa1bd3..349d009 100644
+--- a/modules/translation/translation.module
++++ b/modules/translation/translation.module
+@@ -163,7 +163,7 @@ function translation_link($type, $node = NULL, $teaser = FALSE) {
+     unset($translations[$node->language]);
+     $languages = language_list();
+     foreach ($languages as $langcode => $language) {
+-      if (isset($translations[$langcode])) {
++      if (isset($translations[$langcode]) && $translations[$langcode]->status) {
+         $links["node_translation_$langcode"] = array(
+           'title' => $language->native,
+           'href' => 'node/'. $translations[$langcode]->nid,
+@@ -227,6 +227,7 @@ function translation_nodeapi(&$node, $op, $teaser, $page) {
+           db_query("UPDATE {node} SET tnid = %d, translate = %d WHERE nid = %d", $tnid, 0, $node->translation_source->nid);
+         }
+         db_query("UPDATE {node} SET tnid = %d, translate = %d WHERE nid = %d", $tnid, 0, $node->nid);
++        $node->tnid = $tnid;
+       }
+       break;
+ 
+@@ -289,7 +290,7 @@ function translation_node_get_translations($tnid) {
+   if (is_numeric($tnid) && $tnid) {
+     if (!isset($translations[$tnid])) {
+       $translations[$tnid] = array();
+-      $result = db_query(db_rewrite_sql('SELECT n.nid, n.title, n.language FROM {node} n WHERE n.tnid = %d'), $tnid);
++      $result = db_query(db_rewrite_sql('SELECT n.nid, n.type, n.uid, n.status, n.title, n.language FROM {node} n WHERE n.tnid = %d'), $tnid);
+       while ($node = db_fetch_object($result)) {
+         $translations[$tnid][$node->language] = $node;
+       }
+@@ -336,8 +337,12 @@ function translation_path_get_translations($path) {
+  */
+ function translation_translation_link_alter(&$links, $path) {
+   if ($paths = translation_path_get_translations($path)) {
++    // Path can only start with "node/$nid" or "node/$nid/" here.
++    $path = explode('/', $path);
++    $node = node_load($path[1]);
++    $translations = translation_node_get_translations($node->tnid);  
+     foreach ($links as $langcode => $link) {
+-      if (isset($paths[$langcode])) {
++      if (isset($paths[$langcode]) && $translations[$langcode]->status) {
+         // Translation in a different node.
+         $links[$langcode]['href'] = $paths[$langcode];
+       }
+diff --git a/modules/upload/upload.module b/modules/upload/upload.module
+index 0efe099..01b011b 100644
+--- a/modules/upload/upload.module
++++ b/modules/upload/upload.module
+@@ -17,8 +17,8 @@ function upload_help($path, $arg) {
+       $output .= '<p>'. t('Users with the upload files permission can upload attachments to posts. Uploads may be enabled for specific content types on the content types settings page. Each user role can be customized to limit or control the file size of uploads, or the maximum dimension of image files.') .'</p>';
+       $output .= '<p>'. t('For more information, see the online handbook entry for <a href="@upload">Upload module</a>.', array('@upload' => 'http://drupal.org/handbook/modules/upload/')) .'</p>';
+       return $output;
+-    case 'admin/settings/upload':
+-      return '<p>'. t('Users with the <a href="@permissions">upload files permission</a> can upload attachments. Users with the <a href="@permissions">view uploaded files permission</a> can view uploaded attachments. You can choose which post types can take attachments on the <a href="@types">content types settings</a> page.', array('@permissions' => url('admin/user/permissions'), '@types' => url('admin/settings/types'))) .'</p>';
++    case 'admin/settings/uploads':
++      return '<p>'. t('Users with the <a href="@permissions">upload files permission</a> can upload attachments. Users with the <a href="@permissions">view uploaded files permission</a> can view uploaded attachments. You can choose which post types can take attachments on the <a href="@types">content types settings</a> page.', array('@permissions' => url('admin/user/permissions', array('fragment' => 'module-upload')), '@types' => url('admin/content/types'))) .'</p>';
+   }
+ }
+ 
+@@ -196,7 +196,7 @@ function upload_node_form_submit(&$form, &$form_state) {
+   if (isset($form_state['values']['files'])) {
+     foreach ($form_state['values']['files'] as $fid => $file) {
+       // If the node was previewed prior to saving, $form['#node']->files[$fid]
+-      // is an array instead of an object. Convert file to object for compatibility. 
++      // is an array instead of an object. Convert file to object for compatibility.
+       $form['#node']->files[$fid] = (object) $form['#node']->files[$fid];
+       $form_state['values']['files'][$fid]['new'] = !empty($form['#node']->files[$fid]->new);
+     }
+diff --git a/modules/user/user.module b/modules/user/user.module
+index 63c8c74..7d5a137 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -130,27 +130,29 @@ function user_external_login($account, $edit = array()) {
+ /**
+  * Fetch a user object.
+  *
+- * @param $array
+- *   An associative array of attributes to search for in selecting the
+- *   user, such as user name or e-mail address.
++ * @param $user_info
++ *   Information about the user to load, consisting of one of the following:
++ *   - An associative array whose keys are fields in the {users} table (such as
++ *     uid, name, pass, mail, status) and whose values are the field's value.
++ *   - A numeric user ID.
+  *
+  * @return
+  *   A fully-loaded $user object upon successful user load or FALSE if user
+  *   cannot be loaded.
+  */
+-function user_load($array = array()) {
++function user_load($user_info = array()) {
+   // Dynamically compose a SQL query:
+   $query = array();
+   $params = array();
+ 
+-  if (is_numeric($array)) {
+-    $array = array('uid' => $array);
++  if (is_numeric($user_info)) {
++    $user_info = array('uid' => $user_info);
+   }
+-  elseif (!is_array($array)) {
++  elseif (!is_array($user_info)) {
+     return FALSE;
+   }
+ 
+-  foreach ($array as $key => $value) {
++  foreach ($user_info as $key => $value) {
+     if ($key == 'uid' || $key == 'status') {
+       $query[] = "$key = %d";
+       $params[] = $value;
+@@ -180,7 +182,7 @@ function user_load($array = array()) {
+     while ($role = db_fetch_object($result)) {
+       $user->roles[$role->rid] = $role->name;
+     }
+-    user_module_invoke('load', $array, $user);
++    user_module_invoke('load', $user_info, $user);
+   }
+   else {
+     $user = FALSE;
+diff --git a/robots.txt b/robots.txt
+index 3c94870..ce23e33 100644
+--- a/robots.txt
++++ b/robots.txt
+@@ -25,7 +25,6 @@ Disallow: /misc/
+ Disallow: /modules/
+ Disallow: /profiles/
+ Disallow: /scripts/
+-Disallow: /sites/
+ Disallow: /themes/
+ # Files
+ Disallow: /CHANGELOG.txt
+diff --git a/sites/default/default.settings.php b/sites/default/default.settings.php
+index 070a3e2..49d5964 100644
+--- a/sites/default/default.settings.php
++++ b/sites/default/default.settings.php
+@@ -93,6 +93,26 @@ $db_url = 'mysql://username:password@localhost/databasename';
+ $db_prefix = '';
+ 
+ /**
++ * Database default collation.
++ *
++ * All data stored in Drupal is in UTF-8. Certain databases, such as MySQL,
++ * support different algorithms for comparing, indexing, and sorting characters;
++ * a so called "collation". The default collation of a database normally works
++ * for many use-cases, but depending on the language(s) of the stored data, it
++ * may be necessary to use a different collation.
++ * Important:
++ * - Only set or change this value BEFORE installing Drupal, unless you know
++ *   what you are doing.
++ * - All database tables and columns should be in the same collation. Otherwise,
++ *   string comparisons performed for table JOINs will be significantly slower.
++ * - Especially when storing data in German or Russian on MySQL 5.1+, you want
++ *   to use the 'utf8_unicode_ci' collation instead.
++ *
++ * @see http://drupal.org/node/772678
++ */
++# $db_collation = 'utf8_general_ci';
++
++/**
+  * Access control for update.php script
+  *
+  * If you are updating your Drupal installation using the update.php script
+diff --git a/update.php b/update.php
+index 6bb019d..13e74dc 100644
+--- a/update.php
++++ b/update.php
+@@ -517,6 +517,31 @@ function update_fix_d6_requirements() {
+       'primary key' => array('cid'),
+     );
+     db_create_table($ret, 'cache_block', $schema['cache_block']);
++
++    // Create the semaphore table now -- the menu system after 6.15 depends on
++    // this table, and menu code runs in updates prior to the table being
++    // created in its original update function, system_update_6054().
++    $schema['semaphore'] = array(
++      'fields' => array(
++        'name' => array(
++          'type' => 'varchar',
++          'length' => 255,
++          'not null' => TRUE,
++          'default' => ''),
++        'value' => array(
++          'type' => 'varchar',
++          'length' => 255,
++          'not null' => TRUE,
++          'default' => ''),
++        'expire' => array(
++          'type' => 'float',
++          'size' => 'big',
++          'not null' => TRUE),
++        ),
++      'indexes' => array('expire' => array('expire')),
++      'primary key' => array('name'),
++    );
++    db_create_table($ret, 'semaphore', $schema['semaphore']);
+   }
+ 
+   return $ret;

@@ -1,0 +1,1144 @@
+diff --git a/.htaccess b/.htaccess
+index d0519fc..e362690 100644
+--- a/.htaccess
++++ b/.htaccess
+@@ -3,7 +3,7 @@
+ #
+ 
+ # Protect files and directories from prying eyes.
+-<FilesMatch "\.(engine|inc|info|install|module|profile|po|sh|.*sql|theme|tpl(\.php)?|xtmpl)$|^(code-style\.pl|Entries.*|Repository|Root|Tag|Template)$">
++<FilesMatch "\.(engine|inc|info|install|module|profile|test|po|sh|.*sql|theme|tpl(\.php)?|xtmpl|svn-base)$|^(code-style\.pl|Entries.*|Repository|Root|Tag|Template|all-wcprops|entries|format)$">
+   Order allow,deny
+ </FilesMatch>
+ 
+@@ -18,6 +18,7 @@ ErrorDocument 404 /index.php
+ 
+ # Force simple error message for requests for non-existent favicon.ico.
+ <Files favicon.ico>
++  # There is no end quote below, for compatibility with Apache 1.3.
+   ErrorDocument 404 "The requested file favicon.ico was not found.
+ </Files>
+ 
+@@ -106,4 +107,4 @@ DirectoryIndex index.php
+   RewriteRule ^(.*)$ index.php?q=$1 [L,QSA]
+ </IfModule>
+ 
+-# $Id: .htaccess,v 1.90.2.1 2008/07/08 09:33:14 goba Exp $
++# $Id: .htaccess,v 1.90.2.3 2008/12/10 20:04:08 goba Exp $
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index f83b142..2ab27b8 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,10 @@
+-// $Id: CHANGELOG.txt,v 1.253.2.15 2008/10/22 19:26:00 goba Exp $
++// $Id: CHANGELOG.txt,v 1.253.2.18 2008/12/10 22:30:13 goba Exp $
++
++Drupal 6.7, 2008-12-10
++----------------------
++- Fixed security issues, (Cross site request forgery and Cross site scripting), see SA-2008-073
++- Updated robots.txt and .htaccess to match current file use.
++- Fixed a variety of small bugs.
+ 
+ Drupal 6.6, 2008-10-22
+ ----------------------
+@@ -86,6 +92,8 @@ Drupal 6.0, 2008-02-13
+       ported to the correct core API version.
+     * Can now specify the minimum PHP version required for a module within the
+       .info file.
++    * Drupal core no longer requires CREATE TEMPORARY TABLES or LOCK TABLES
++      database rights.
+     * Dynamically check password strength and confirmation.
+     * Refactored poll administration.
+     * Implemented drag-and-drop positioning for blocks, menu items, taxonomy
+@@ -142,6 +150,12 @@ Drupal 6.0, 2008-02-13
+ - Removed old system updates. Updates from Drupal versions prior to 5.x will
+   require upgrading to 5.x before upgrading to 6.x.
+ 
++Drupal 5.13, 2008-12-10
++-----------------------
++- fixed a variety of small bugs.
++- fixed security issues, (Cross site request forgery and Cross site scripting), see SA-2008-073
++- updated robots.txt and .htaccess to match current file use. 
++
+ Drupal 5.12, 2008-10-22
+ -----------------------
+ - fixed security issues, (File inclusion), see SA-2008-067
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index 32d5883..8ae8b0c 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: bootstrap.inc,v 1.206.2.6 2008/10/22 19:26:01 goba Exp $
++// $Id: bootstrap.inc,v 1.206.2.7 2008/12/08 11:49:48 goba Exp $
+ 
+ /**
+  * @file
+@@ -238,11 +238,6 @@ function conf_path($require_settings = TRUE, $reset = FALSE) {
+ 
+   $confdir = 'sites';
+   $uri = explode('/', $_SERVER['SCRIPT_NAME'] ? $_SERVER['SCRIPT_NAME'] : $_SERVER['SCRIPT_FILENAME']);
+-  if (strpos($_SERVER['HTTP_HOST'], '/') !== FALSE) {
+-    // A HTTP_HOST containing slashes may be an attack and is invalid.
+-    header('HTTP/1.1 400 Bad Request');
+-    exit;
+-  }
+   $server = explode('.', implode('.', array_reverse(explode(':', rtrim($_SERVER['HTTP_HOST'], '.')))));
+   for ($i = count($uri) - 1; $i > 0; $i--) {
+     for ($j = count($server); $j > 0; $j--) {
+@@ -272,6 +267,21 @@ function drupal_unset_globals() {
+ }
+ 
+ /**
++ * Validate that $_SERVER['HTTP_HOST'] is safe.
++ *
++ * As $_SERVER['HTTP_HOST'] is user input, ensure it only contains characters
++ * allowed in hostnames.  See RFC 952 (and RFC 2181). $_SERVER['HTTP_HOST'] is
++ * lowercased.
++ *
++ * @return
++ *  TRUE if only containing valid characters, or FALSE otherwise.
++ */
++function drupal_valid_http_host() {
++  $_SERVER['HTTP_HOST'] = strtolower($_SERVER['HTTP_HOST']);
++  return preg_match('/^\[?(?:[a-z0-9-:\]_]+\.?)+$/', $_SERVER['HTTP_HOST']);
++}
++
++/**
+  * Loads the configuration and sets the base URL, cookie domain, and
+  * session name correctly.
+  */
+@@ -282,6 +292,12 @@ function conf_init() {
+   global $db_url, $db_prefix, $cookie_domain, $conf, $installed_profile, $update_free_access;
+   $conf = array();
+ 
++  if (!drupal_valid_http_host()) {
++    // HTTP_HOST is invalid, e.g. if containing slashes it may be an attack.
++    header('HTTP/1.1 400 Bad Request');
++    exit;
++  }
++
+   if (file_exists('./'. conf_path() .'/settings.php')) {
+     include_once './'. conf_path() .'/settings.php';
+   }
+@@ -305,9 +321,7 @@ function conf_init() {
+     // Create base URL
+     $base_root = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] == 'on') ? 'https' : 'http';
+ 
+-    // As $_SERVER['HTTP_HOST'] is user input, ensure it only contains
+-    // characters allowed in hostnames.
+-    $base_url = $base_root .= '://'. preg_replace('/[^a-z0-9-:._]/i', '', $_SERVER['HTTP_HOST']);
++    $base_url = $base_root .= '://'. $_SERVER['HTTP_HOST'];
+ 
+     // $_SERVER['SCRIPT_NAME'] can, in contrast to $_SERVER['PHP_SELF'], not
+     // be modified by a visitor.
+diff --git a/includes/common.inc b/includes/common.inc
+index d0bed0b..96a8a66 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: common.inc,v 1.756.2.29 2008/10/22 19:26:01 goba Exp $
++// $Id: common.inc,v 1.756.2.35 2008/12/10 22:30:13 goba Exp $
+ 
+ /**
+  * @file
+@@ -499,9 +499,8 @@ function drupal_http_request($url, $headers = array(), $method = 'GET', $data =
+   $request = $method .' '. $path ." HTTP/1.0\r\n";
+   $request .= implode("\r\n", $defaults);
+   $request .= "\r\n\r\n";
+-  if ($data) {
+-    $request .= $data ."\r\n";
+-  }
++  $request .= $data;
++
+   $result->request = $request;
+ 
+   fwrite($fp, $request);
+@@ -665,7 +664,7 @@ function fix_gpc_magic() {
+ /**
+  * Translate strings to the page language or a given language.
+  *
+- * All human-readable text that will be displayed somewhere within a page should
++ * Human-readable text that will be displayed somewhere within a page should
+  * be run through the t() function.
+  *
+  * Examples:
+@@ -732,7 +731,7 @@ function fix_gpc_magic() {
+  *   $output .= '<p>'. t('Go to the <a href="@contact-page">contact page</a>.', array('@contact-page' => url('contact'))) .'</p>';
+  * @endcode
+  *
+- * Also avoid escaping quotation marks wherever possible.
++ * Avoid escaping quotation marks wherever possible.
+  *
+  * Incorrect:
+  * @code
+@@ -744,6 +743,101 @@ function fix_gpc_magic() {
+  *   $output .= t("Don't click me.");
+  * @endcode
+  *
++ * Because t() is designed for handling code-based strings, in almost all
++ * cases, the actual string and not a variable must be passed through t().
++ *
++ * Extraction of translations is done based on the strings contained in t()
++ * calls. If a variable is passed through t(), the content of the variable
++ * cannot be extracted from the file for translation.
++ *
++ * Incorrect:
++ * @code
++ *   $message = 'An error occurred.';
++ *   drupal_set_message(t($message), 'error');
++ *   $output .= t($message);
++ * @endcode
++ *
++ * Correct:
++ * @code
++ *   $message = t('An error occurred.');
++ *   drupal_set_message($message, 'error');
++ *   $output .= $message;
++ * @endcode
++ *
++ * The only case in which variables can be passed safely through t() is when
++ * code-based versions of the same strings will be passed through t() (or
++ * otherwise extracted) elsewhere.
++ *
++ * In some cases, modules may include strings in code that can't use t()
++ * calls. For example, a module may use an external PHP application that
++ * produces strings that are loaded into variables in Drupal for output.
++ * In these cases, module authors may include a dummy file that passes the
++ * relevant strings through t(). This approach will allow the strings to be
++ * extracted.
++ *
++ * Sample external (non-Drupal) code:
++ * @code
++ *   class Time {
++ *     public $yesterday = 'Yesterday';
++ *     public $today = 'Today';
++ *     public $tomorrow = 'Tomorrow';
++ *   }
++ * @endcode
++ *
++ * Sample dummy file.
++ * @code
++ *   // Dummy function included in example.potx.inc.
++ *   function example_potx() {
++ *     $strings = array(
++ *       t('Yesterday'),
++ *       t('Today'),
++ *       t('Tomorrow'),
++ *     );
++ *     // No return value needed, since this is a dummy function.
++ *   }
++ * @endcode
++ *
++ * Having passed strings through t() in a dummy function, it is then
++ * okay to pass variables through t().
++ *
++ * Correct (if a dummy file was used):
++ * @code
++ *   $time = new Time();
++ *   $output .= t($time->today);
++ * @endcode
++ *
++ * However tempting it is, custom data from user input or other non-code
++ * sources should not be passed through t(). Doing so leads to the following
++ * problems and errors:
++ *  - The t() system doesn't support updates to existing strings. When user
++ *    data is updated, the next time it's passed through t() a new record is
++ *    created instead of an update. The database bloats over time and any
++ *    existing translations are orphaned with each update.
++ *  - The t() system assumes any data it receives is in English. User data may
++ *    be in another language, producing translation errors.
++ *  - The "Built-in interface" text group in the locale system is used to
++ *    produce translations for storage in .po files. When non-code strings are
++ *    passed through t(), they are added to this text group, which is rendered
++ *    inaccurate since it is a mix of actual interface strings and various user
++ *    input strings of uncertain origin.
++ *
++ * Incorrect:
++ * @code
++ *   $item = item_load();
++ *   $output .= check_plain(t($item['title']));
++ * @endcode
++ *
++ * Instead, translation of these data can be done through the locale system,
++ * either directly or through helper functions provided by contributed
++ * modules.
++ * @see hook_locale()
++ *
++ * During installation, st() is used in place of t(). Code that may be called
++ * during installation or during normal operation should use the get_t()
++ * helper function.
++ * @see st()
++ * @see get_t()
++ *
+  * @param $string
+  *   A string containing the English string to translate.
+  * @param $args
+@@ -1820,7 +1914,7 @@ function _drupal_build_css_path($matches, $base = NULL) {
+   $last = '';
+   while ($path != $last) {
+     $last = $path;
+-    $path = preg_replace('`(^|/)(?!../)([^/]+)/../`', '$1', $path);
++    $path = preg_replace('`(^|/)(?!\.\./)([^/]+)/\.\./`', '$1', $path);
+   }
+   return 'url('. $path .')';
+ }
+@@ -3537,7 +3631,16 @@ function drupal_flush_all_caches() {
+ 
+   drupal_clear_css_cache();
+   drupal_clear_js_cache();
+-  system_theme_data();
++
++  // If invoked from update.php, we must not update the theme information in the
++  // database, or this will result in all themes being disabled.
++  if (defined('MAINTENANCE_MODE') && MAINTENANCE_MODE == 'update') {
++    _system_theme_data();
++  }
++  else {
++    system_theme_data();
++  }
++
+   drupal_rebuild_theme_registry();
+   menu_rebuild();
+   node_types_rebuild();
+diff --git a/includes/database.pgsql.inc b/includes/database.pgsql.inc
+index 5a494c9..bc267e8 100644
+--- a/includes/database.pgsql.inc
++++ b/includes/database.pgsql.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: database.pgsql.inc,v 1.68.2.2 2008/07/08 09:50:03 goba Exp $
++// $Id: database.pgsql.inc,v 1.68.2.3 2008/11/17 10:31:41 goba Exp $
+ 
+ /**
+  * @file
+@@ -85,6 +85,7 @@ function db_connect($url) {
+   // Restore error tracking setting
+   ini_set('track_errors', $track_errors_previous);
+ 
++  pg_query($connection, "set client_encoding=\"UTF8\"");
+   return $connection;
+ }
+ 
+diff --git a/includes/form.inc b/includes/form.inc
+index e2096d1..a51f968 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: form.inc,v 1.265.2.13 2008/10/16 12:43:08 goba Exp $
++// $Id: form.inc,v 1.265.2.16 2008/11/22 13:03:19 dries Exp $
+ 
+ /**
+  * @defgroup forms Form builder functions
+@@ -589,8 +589,7 @@ function drupal_validate_form($form_id, $form, &$form_state) {
+  * @param $form
+  *   An associative array containing the structure of the form.
+  * @return
+- *   A string containing the path of the page to display when processing
+- *   is complete.
++ *   A string containing the themed HTML.
+  */
+ function drupal_render_form($form_id, &$form) {
+   // Don't override #theme if someone already set it.
+@@ -1499,7 +1498,7 @@ function form_get_options($element, $key) {
+  * @ingroup themeable
+  */
+ function theme_fieldset($element) {
+-  if ($element['#collapsible']) {
++  if (!empty($element['#collapsible'])) {
+     drupal_add_js('misc/collapse.js');
+ 
+     if (!isset($element['#attributes']['class'])) {
+@@ -1507,7 +1506,7 @@ function theme_fieldset($element) {
+     }
+ 
+     $element['#attributes']['class'] .= ' collapsible';
+-    if ($element['#collapsed']) {
++    if (!empty($element['#collapsed'])) {
+       $element['#attributes']['class'] .= ' collapsed';
+     }
+   }
+@@ -1915,7 +1914,15 @@ function expand_checkboxes($element) {
+     }
+     foreach ($element['#options'] as $key => $choice) {
+       if (!isset($element[$key])) {
+-        $element[$key] = array('#type' => 'checkbox', '#processed' => TRUE, '#title' => $choice, '#return_value' => $key, '#default_value' => isset($value[$key]), '#attributes' => $element['#attributes']);
++        $element[$key] = array(
++          '#type' => 'checkbox',
++          '#processed' => TRUE,
++          '#title' => $choice,
++          '#return_value' => $key,
++          '#default_value' => isset($value[$key]),
++          '#attributes' => $element['#attributes'],
++          '#ahah' => isset($element['#ahah']) ? $element['#ahah'] : NULL,
++        );
+       }
+     }
+   }
+diff --git a/includes/locale.inc b/includes/locale.inc
+index e168462..85f28e9 100644
+--- a/includes/locale.inc
++++ b/includes/locale.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: locale.inc,v 1.174.2.4 2008/09/17 08:47:04 goba Exp $
++// $Id: locale.inc,v 1.174.2.5 2008/12/10 21:29:36 goba Exp $
+ 
+ /**
+  * @file
+@@ -664,7 +664,7 @@ function locale_translate_import_form_submit($form, &$form_state) {
+   }
+   else {
+     drupal_set_message(t('File to import not found.'), 'error');
+-    return 'admin/build/translate/import';
++    $form_state['redirect'] = 'admin/build/translate/import';
+   }
+ 
+   $form_state['redirect'] = 'admin/build/translate';
+@@ -825,7 +825,38 @@ function locale_translate_edit_form(&$form_state, $lid) {
+ }
+ 
+ /**
++ * Check that a string is safe to be added or imported as a translation.
++ *
++ * This test can be used to detect possibly bad translation strings. It should
++ * not have any false positives. But it is only a test, not a transformation,
++ * as it destroys valid HTML. We cannot reliably filter translation strings
++ * on inport becuase some strings are irreversibly corrupted. For example,
++ * a &amp; in the translation would get encoded to &amp;amp; by filter_xss()
++ * before being put in the database, and thus would be displayed incorrectly.
++ *
++ * The allowed tag list is like filter_xss_admin(), but omitting div and img as
++ * not needed for translation and likely to cause layout issues (div) or a
++ * possible attack vector (img).
++ */
++function locale_string_is_safe($string) {
++  return decode_entities($string) == decode_entities(filter_xss($string, array('a', 'abbr', 'acronym', 'address', 'b', 'bdo', 'big', 'blockquote', 'br', 'caption', 'cite', 'code', 'col', 'colgroup', 'dd', 'del', 'dfn', 'dl', 'dt', 'em', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'hr', 'i', 'ins', 'kbd', 'li', 'ol', 'p', 'pre', 'q', 'samp', 'small', 'span', 'strong', 'sub', 'sup', 'table', 'tbody', 'td', 'tfoot', 'th', 'thead', 'tr', 'tt', 'ul', 'var')));
++}
++
++/**
++ * Validate string editing form submissions.
++ */
++function locale_translate_edit_form_validate($form, &$form_state) {
++  foreach ($form_state['values']['translations'] as $key => $value) {
++    if (!locale_string_is_safe($value)) {
++      form_set_error('translations', t('The submitted string contains disallowed HTML: %string', array('%string' => $value)));
++      watchdog('locale', 'Attempted submission of a translation string with disallowed HTML: %string', array('%string' => $value), WATCHDOG_WARNING);
++    }
++  }
++}
++
++/**
+  * Process string editing form submissions.
++ *
+  * Saves all translations of one string submitted from a form.
+  */
+ function locale_translate_edit_form_submit($form, &$form_state) {
+@@ -1003,7 +1034,7 @@ function _locale_import_po($file, $langcode, $mode, $group = NULL) {
+   }
+ 
+   // Get status information on import process.
+-  list($headerdone, $additions, $updates, $deletes) = _locale_import_one_string('db-report');
++  list($headerdone, $additions, $updates, $deletes, $skips) = _locale_import_one_string('db-report');
+ 
+   if (!$headerdone) {
+     drupal_set_message(t('The translation file %filename appears to have a missing or malformed header.', array('%filename' => $file->filename)), 'error');
+@@ -1018,6 +1049,11 @@ function _locale_import_po($file, $langcode, $mode, $group = NULL) {
+ 
+   drupal_set_message(t('The translation was successfully imported. There are %number newly created translated strings, %update strings were updated and %delete strings were removed.', array('%number' => $additions, '%update' => $updates, '%delete' => $deletes)));
+   watchdog('locale', 'Imported %file into %locale: %number new strings added, %update updated and %delete removed.', array('%file' => $file->filename, '%locale' => $langcode, '%number' => $additions, '%update' => $updates, '%delete' => $deletes));
++  if ($skips) {
++    $skip_message = format_plural($skips, 'One translation string was skipped because it contains disallowed HTML.', '@count translation strings were skipped because they contain disallowed HTML.');
++    drupal_set_message($skip_message);
++    watchdog('locale', $skip_message, NULL, WATCHDOG_WARNING);
++  }
+   return TRUE;
+ }
+ 
+@@ -1207,7 +1243,7 @@ function _locale_import_message($message, $file, $lineno = NULL) {
+  *   Text group to import PO file into (eg. 'default' for interface translations)
+  */
+ function _locale_import_one_string($op, $value = NULL, $mode = NULL, $lang = NULL, $file = NULL, $group = 'default') {
+-  static $report = array(0, 0, 0);
++  static $report = array('additions' => 0, 'updates' => 0, 'deletes' => 0, 'skips' => 0);
+   static $headerdone = FALSE;
+   static $strings = array();
+ 
+@@ -1223,7 +1259,7 @@ function _locale_import_one_string($op, $value = NULL, $mode = NULL, $lang = NUL
+ 
+     // Called at end of import to inform the user
+     case 'db-report':
+-      return array($headerdone, $report[0], $report[1], $report[2]);
++      return array($headerdone, $report['additions'], $report['updates'], $report['deletes'], $report['skips']);
+ 
+     // Store the string we got in the database.
+     case 'db-store':
+@@ -1302,19 +1338,24 @@ function _locale_import_one_string_db(&$report, $langcode, $source, $translation
+   $lid = db_result(db_query("SELECT lid FROM {locales_source} WHERE source = '%s' AND textgroup = '%s'", $source, $textgroup));
+ 
+   if (!empty($translation)) {
+-    if ($lid) {
++     // Skip this string unless it passes a check for dangerous code.
++     if (!locale_string_is_safe($translation)) {
++       $report['skips']++;
++       $lid = 0;
++     }
++     elseif ($lid) {
+       // We have this source string saved already.
+       db_query("UPDATE {locales_source} SET location = '%s' WHERE lid = %d", $location, $lid);
+       $exists = (bool) db_result(db_query("SELECT lid FROM {locales_target} WHERE lid = %d AND language = '%s'", $lid, $langcode));
+       if (!$exists) {
+         // No translation in this language.
+         db_query("INSERT INTO {locales_target} (lid, language, translation, plid, plural) VALUES (%d, '%s', '%s', %d, %d)", $lid, $langcode, $translation, $plid, $plural);
+-        $report[0]++;
++        $report['additions']++;
+       }
+       else if ($mode == LOCALE_IMPORT_OVERWRITE) {
+         // Translation exists, only overwrite if instructed.
+         db_query("UPDATE {locales_target} SET translation = '%s', plid = %d, plural = %d WHERE language = '%s' AND lid = %d", $translation, $plid, $plural, $langcode, $lid);
+-        $report[1]++;
++        $report['updates']++;
+       }
+     }
+     else {
+@@ -1322,13 +1363,13 @@ function _locale_import_one_string_db(&$report, $langcode, $source, $translation
+       db_query("INSERT INTO {locales_source} (location, source, textgroup) VALUES ('%s', '%s', '%s')", $location, $source, $textgroup);
+       $lid = db_result(db_query("SELECT lid FROM {locales_source} WHERE source = '%s' AND textgroup = '%s'", $source, $textgroup));
+       db_query("INSERT INTO {locales_target} (lid, language, translation, plid, plural) VALUES (%d, '%s', '%s', %d, %d)", $lid, $langcode, $translation, $plid, $plural);
+-      $report[0]++;
++      $report['additions']++;
+     }
+   }
+   elseif ($mode == LOCALE_IMPORT_OVERWRITE) {
+     // Empty translation, remove existing if instructed.
+     db_query("DELETE FROM {locales_target} WHERE language = '%s' AND lid = %d AND plid = %d AND plural = %d", $translation, $langcode, $lid, $plid, $plural);
+-    $report[2]++;
++    $report['deletes']++;
+   }
+ 
+   return $lid;
+diff --git a/includes/menu.inc b/includes/menu.inc
+index 3d5486d..eb95127 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: menu.inc,v 1.255.2.25 2008/10/22 17:04:12 goba Exp $
++// $Id: menu.inc,v 1.255.2.27 2008/11/10 17:30:39 goba Exp $
+ 
+ /**
+  * @file
+diff --git a/includes/session.inc b/includes/session.inc
+index 3410858..3dc8408 100644
+--- a/includes/session.inc
++++ b/includes/session.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: session.inc,v 1.44.2.4 2008/10/20 09:53:32 goba Exp $
++// $Id: session.inc,v 1.44.2.5 2008/12/08 14:42:30 goba Exp $
+ 
+ /**
+  * @file
+@@ -97,6 +97,10 @@ function sess_regenerate() {
+     setcookie(session_name(), '', time() - 42000, '/');
+   }
+ 
++  extract(session_get_cookie_params());
++  // Set "httponly" to TRUE to reduce the risk of session stealing via XSS.
++  // This has no effect for PHP < 5.2.0.
++  session_set_cookie_params($lifetime, $path, $domain, $secure, TRUE);
+   session_regenerate_id();
+ 
+   db_query("UPDATE {sessions} SET sid = '%s' WHERE sid = '%s'", session_id(), $old_session_id);
+diff --git a/includes/theme.inc b/includes/theme.inc
+index 428b334..430c6ab 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: theme.inc,v 1.415.2.13 2008/10/16 13:50:59 dries Exp $
++// $Id: theme.inc,v 1.415.2.17 2008/12/10 21:09:05 goba Exp $
+ 
+ /**
+  * @file
+@@ -8,8 +8,7 @@
+  * The theme system allows for nearly all output of the Drupal system to be
+  * customized by user themes.
+  *
+- * @see <a href="http://drupal.org/node/171179">Theme guide</a>
+- * @see themeable
++ * @ingroup themeable
+  */
+ 
+ /**
+@@ -261,6 +260,7 @@ function drupal_rebuild_theme_registry() {
+  * over how and when the preprocess functions are run.
+  */
+ function _theme_process_registry(&$cache, $name, $type, $theme, $path) {
++  $result = array();
+   $function = $name .'_theme';
+   if (function_exists($function)) {
+     $result = $function($cache, $type, $theme, $path);
+@@ -358,6 +358,26 @@ function _theme_process_registry(&$cache, $name, $type, $theme, $path) {
+     // Merge the newly created theme hooks into the existing cache.
+     $cache = array_merge($cache, $result);
+   }
++
++  // Let themes have preprocess functions even if they didn't register a template.
++  if ($type == 'theme' || $type == 'base_theme') {
++    foreach ($cache as $hook => $info) {
++      // Check only if it's a template and not registered by the theme or engine.
++      if (!empty($info['template']) && empty($result[$hook])) {
++        if (!isset($info['preprocess functions'])) {
++          $cache[$hook]['preprocess functions'] = array();
++        }
++        if (function_exists($name .'_preprocess')) {
++          $cache[$hook]['preprocess functions'][] = $name .'_preprocess';
++        }
++        if (function_exists($name .'_preprocess_'. $hook)) {
++          $cache[$hook]['preprocess functions'][] = $name .'_preprocess_'. $hook;
++        }
++        // Ensure uniqueness.
++        $cache[$hook]['preprocess functions'] = array_unique($cache[$hook]['preprocess functions']);
++      }
++    }
++  }
+ }
+ 
+ /**
+@@ -747,6 +767,12 @@ function drupal_find_theme_functions($cache, $prefixes) {
+         $templates[$hook] = array(
+           'function' => $prefix .'_'. $hook,
+         );
++        // Ensure that the pattern is maintained from base themes to its sub-themes.
++        // Each sub-theme will have their functions scanned so the pattern must be
++        // held for subsequent runs.
++        if (isset($info['pattern'])) {
++          $templates[$hook]['pattern'] = $info['pattern'];
++        }
+       }
+     }
+   }
+@@ -812,6 +838,12 @@ function drupal_find_theme_templates($cache, $extension, $path) {
+         'path' => dirname($file->filename),
+       );
+     }
++    // Ensure that the pattern is maintained from base themes to its sub-themes.
++    // Each sub-theme will have their templates scanned so the pattern must be
++    // held for subsequent runs.
++    if (isset($cache[$hook]['pattern'])) {
++      $templates[$hook]['pattern'] = $cache[$hook]['pattern'];
++    }
+   }
+ 
+   $patterns = array_keys($files);
+@@ -1409,10 +1441,10 @@ function theme_mark($type = MARK_NEW) {
+  *   All other elements are treated as attributes of the list item element.
+  * @param $title
+  *   The title of the list.
+- * @param $attributes
+- *   The attributes applied to the list element.
+  * @param $type
+  *   The type of list to return (e.g. "ul", "ol")
++ * @param $attributes
++ *   The attributes applied to the list element.
+  * @return
+  *   A string containing the list output.
+  */
+diff --git a/modules/aggregator/aggregator.install b/modules/aggregator/aggregator.install
+index 49b2f85..6b8439e 100644
+--- a/modules/aggregator/aggregator.install
++++ b/modules/aggregator/aggregator.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: aggregator.install,v 1.14 2007/12/18 12:59:20 dries Exp $
++// $Id: aggregator.install,v 1.14.2.1 2008/11/09 13:22:35 goba Exp $
+ 
+ /**
+  * Implementation of hook_install().
+@@ -138,13 +138,13 @@ function aggregator_schema() {
+         'length' => 255,
+         'not null' => TRUE,
+         'default' => '',
+-        'description' => t('The parent website of the feed; comes from the <link> element in the feed.'),
++        'description' => t('The parent website of the feed; comes from the &lt;link&gt; element in the feed.'),
+       ),
+       'description' => array(
+         'type' => 'text',
+         'not null' => TRUE,
+         'size' => 'big',
+-        'description' => t("The parent website's description; comes from the <description> element in the feed."),
++        'description' => t("The parent website's description; comes from the &lt;description&gt; element in the feed."),
+       ),
+       'image' => array(
+         'type' => 'text',
+diff --git a/modules/block/block.admin.inc b/modules/block/block.admin.inc
+index 004a7ae..c954e7f 100644
+--- a/modules/block/block.admin.inc
++++ b/modules/block/block.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: block.admin.inc,v 1.14.2.3 2008/10/20 13:02:29 dries Exp $
++// $Id: block.admin.inc,v 1.14.2.5 2008/11/24 06:00:02 dries Exp $
+ 
+ /**
+  * @file
+@@ -38,9 +38,14 @@ function block_admin_display_form(&$form_state, $blocks, $theme = NULL) {
+   $throttle = module_exists('throttle');
+   $block_regions = system_region_list($theme_key) + array(BLOCK_REGION_NONE => '<'. t('none') .'>');
+ 
++  // Weights range from -delta to +delta, so delta should be at least half
++  // of the amount of blocks present. This makes sure all blocks in the same
++  // region get an unique weight.
++  $weight_delta = round(count($blocks) / 2);
++
+   // Build form tree
+   $form = array(
+-    '#action' => arg(3) ? url('admin/build/block/list/'. $theme_key) : url('admin/build/block'),
++    '#action' => arg(4) ? url('admin/build/block/list/'. $theme_key) : url('admin/build/block'),
+     '#tree' => TRUE,
+   );
+ 
+@@ -64,6 +69,7 @@ function block_admin_display_form(&$form_state, $blocks, $theme = NULL) {
+     $form[$key]['weight'] = array(
+       '#type' => 'weight',
+       '#default_value' => $block['weight'],
++      '#delta' => $weight_delta,
+     );
+     $form[$key]['region'] = array(
+       '#type' => 'select',
+diff --git a/modules/block/block.install b/modules/block/block.install
+index 9412745..2cce18d 100644
+--- a/modules/block/block.install
++++ b/modules/block/block.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: block.install,v 1.8 2007/12/18 12:59:20 dries Exp $
++// $Id: block.install,v 1.8.2.1 2008/11/09 13:22:35 goba Exp $
+ 
+ /**
+  * Implementation of hook_schema().
+@@ -86,7 +86,7 @@ function block_schema() {
+         'length' => 64,
+         'not null' => TRUE,
+         'default' => '',
+-        'description' => t('Custom title for the block. (Empty string will use block default title, <none> will remove the title, text will cause block to use specified title.)'),
++        'description' => t('Custom title for the block. (Empty string will use block default title, &lt;none&gt; will remove the title, text will cause block to use specified title.)'),
+       ),
+       'cache' => array(
+         'type' => 'int',
+diff --git a/modules/filter/filter.module b/modules/filter/filter.module
+index 4fa65b9..db09ca9 100644
+--- a/modules/filter/filter.module
++++ b/modules/filter/filter.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: filter.module,v 1.204.2.7 2008/09/17 12:47:14 goba Exp $
++// $Id: filter.module,v 1.204.2.8 2008/12/10 22:30:14 goba Exp $
+ 
+ /**
+  * @file
+@@ -375,13 +375,20 @@ function filter_list_format($format) {
+   static $filters = array();
+ 
+   if (!isset($filters[$format])) {
+-    $filters[$format] = array();
+     $result = db_query("SELECT * FROM {filters} WHERE format = %d ORDER BY weight, module, delta", $format);
+-    while ($filter = db_fetch_object($result)) {
+-      $list = module_invoke($filter->module, 'filter', 'list');
+-      if (isset($list) && is_array($list) && isset($list[$filter->delta])) {
+-        $filter->name = $list[$filter->delta];
+-        $filters[$format][$filter->module .'/'. $filter->delta] = $filter;
++    if (db_affected_rows($result) == 0 && !db_result(db_query("SELECT 1 FROM {filter_formats} WHERE format = %d", $format))) {
++      // The format has no filters and does not exist, use the default input
++      // format.
++      $filters[$format] = filter_list_format(variable_get('filter_default_format', 1));
++    }
++    else {
++      $filters[$format] = array();
++      while ($filter = db_fetch_object($result)) {
++        $list = module_invoke($filter->module, 'filter', 'list');
++        if (isset($list) && is_array($list) && isset($list[$filter->delta])) {
++          $filter->name = $list[$filter->delta];
++          $filters[$format][$filter->module .'/'. $filter->delta] = $filter;
++        }
+       }
+     }
+   }
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index 3e9e02e..ff28bb3 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: forum.module,v 1.448.2.4 2008/04/25 20:39:54 goba Exp $
++// $Id: forum.module,v 1.448.2.5 2008/10/24 19:07:47 dries Exp $
+ 
+ /**
+  * @file
+@@ -378,7 +378,7 @@ function forum_form_alter(&$form, $form_state, $form_id) {
+     // Hide multiple parents select from forum terms.
+     elseif ($form_id == 'taxonomy_form_term') {
+       $form['advanced']['parent']['#access'] = FALSE;
+-    }    
++    }
+   }
+   if ($form_id == 'forum_node_form') {
+     // Make the vocabulary required for 'real' forum-nodes.
+@@ -563,7 +563,7 @@ function forum_get_topics($tid, $sortby, $forum_per_page) {
+   global $user, $forum_topic_list_header;
+ 
+   $forum_topic_list_header = array(
+-    array('data' => '&nbsp;', 'field' => NULL),
++    NULL,
+     array('data' => t('Topic'), 'field' => 'n.title'),
+     array('data' => t('Replies'), 'field' => 'l.comment_count'),
+     array('data' => t('Created'), 'field' => 'n.created'),
+diff --git a/modules/node/node.admin.inc b/modules/node/node.admin.inc
+index 77f887e..50db45e 100644
+--- a/modules/node/node.admin.inc
++++ b/modules/node/node.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: node.admin.inc,v 1.19.2.1 2008/03/21 22:01:05 goba Exp $
++// $Id: node.admin.inc,v 1.19.2.2 2008/11/10 10:31:06 goba Exp $
+ 
+ /**
+  * @file
+@@ -25,6 +25,7 @@ function node_configure() {
+     $form['access']['rebuild'] = array(
+       '#type' => 'submit',
+       '#value' => t('Rebuild permissions'),
++      '#submit' => array('node_configure_access_submit'),
+     );
+   }
+ 
+@@ -59,18 +60,14 @@ function node_configure() {
+     '#description' => t('Must users preview posts before submitting?'),
+   );
+ 
+-  $form['#validate'] = array('node_configure_validate');
+-
+   return system_settings_form($form);
+ }
+ 
+ /**
+- * Form validate callback.
++ * Form button submit callback.
+  */
+-function node_configure_validate($form, &$form_state) {
+-  if ($form_state['values']['op'] == t('Rebuild permissions')) {
+-    drupal_goto('admin/content/node-settings/rebuild');
+-  }
++function node_configure_access_submit($form, &$form_state) {
++  $form_state['redirect'] = 'admin/content/node-settings/rebuild';
+ }
+ 
+ /**
+@@ -87,7 +84,6 @@ function node_configure_rebuild_confirm() {
+ function node_configure_rebuild_confirm_submit($form, &$form_state) {
+   node_access_rebuild(TRUE);
+   $form_state['redirect'] = 'admin/content/node-settings';
+-  return;
+ }
+ 
+ /**
+diff --git a/modules/node/node.install b/modules/node/node.install
+index 8f92191..18e5b3b 100644
+--- a/modules/node/node.install
++++ b/modules/node/node.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: node.install,v 1.4.2.1 2008/04/15 08:39:40 dries Exp $
++// $Id: node.install,v 1.4.2.2 2008/12/10 21:24:43 goba Exp $
+ 
+ /**
+  * Implementation of hook_schema().
+@@ -258,7 +258,7 @@ function node_schema() {
+         'not null' => TRUE,
+         'default' => ''),
+       'module' => array(
+-        'description' => t('The module that implements this type.'),
++        'description' => t('The base string used to construct callbacks corresponding to this node type.'),
+         'type' => 'varchar',
+         'length' => 255,
+         'not null' => TRUE),
+diff --git a/modules/node/node.pages.inc b/modules/node/node.pages.inc
+index 1efbcb1..430a5ec 100644
+--- a/modules/node/node.pages.inc
++++ b/modules/node/node.pages.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: node.pages.inc,v 1.28.2.2 2008/09/17 07:42:35 goba Exp $
++// $Id: node.pages.inc,v 1.28.2.3 2008/11/10 10:18:54 goba Exp $
+ 
+ /**
+  * @file
+@@ -32,7 +32,7 @@ function theme_node_add_list($content) {
+   if ($content) {
+     $output = '<dl class="node-type-list">';
+     foreach ($content as $item) {
+-      $output .= '<dt>'. l($item['title'], $item['href'], $item['options']) .'</dt>';
++      $output .= '<dt>'. l($item['title'], $item['href'], $item['localized_options']) .'</dt>';      
+       $output .= '<dd>'. filter_xss_admin($item['description']) .'</dd>';
+     }
+     $output .= '</dl>';
+diff --git a/modules/path/path.admin.inc b/modules/path/path.admin.inc
+index e2c04cf..6533202 100644
+--- a/modules/path/path.admin.inc
++++ b/modules/path/path.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: path.admin.inc,v 1.7 2008/01/08 10:35:42 goba Exp $
++// $Id: path.admin.inc,v 1.7.2.1 2008/11/22 10:49:15 dries Exp $
+ 
+ /**
+  * @file
+@@ -92,7 +92,7 @@ function path_admin_form(&$form_state, $edit = array('src' => '', 'dst' => '', '
+     '#type' => 'textfield',
+     '#title' => t('Existing system path'),
+     '#default_value' => $edit['src'],
+-    '#maxlength' => 64,
++    '#maxlength' => 128,
+     '#size' => 45,
+     '#description' => t('Specify the existing path you wish to alias. For example: node/28, forum/1, taxonomy/term/1+2.'),
+     '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q='),
+@@ -102,7 +102,7 @@ function path_admin_form(&$form_state, $edit = array('src' => '', 'dst' => '', '
+     '#type' => 'textfield',
+     '#title' => t('Path alias'),
+     '#default_value' => $edit['dst'],
+-    '#maxlength' => 64,
++    '#maxlength' => 128,
+     '#size' => 45,
+     '#description' => t('Specify an alternative path by which this data can be accessed. For example, type "about" when writing an about page. Use a relative path and don\'t add a trailing slash or the URL alias won\'t work.'),
+     '#field_prefix' => url(NULL, array('absolute' => TRUE)) . (variable_get('clean_url', 0) ? '' : '?q='),
+@@ -198,7 +198,7 @@ function path_admin_filter_form(&$form_state, $keys = '') {
+     '#type' => 'textfield',
+     '#title' => '',
+     '#default_value' => $keys,
+-    '#maxlength' => 64,
++    '#maxlength' => 128,
+     '#size' => 25,
+   );
+   $form['basic']['inline']['submit'] = array(
+diff --git a/modules/path/path.module b/modules/path/path.module
+index f0973d5..5c66e06 100644
+--- a/modules/path/path.module
++++ b/modules/path/path.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: path.module,v 1.138.2.2 2008/06/21 18:22:53 dries Exp $
++// $Id: path.module,v 1.138.2.3 2008/11/22 10:49:15 dries Exp $
+ 
+ /**
+  * @file
+@@ -192,7 +192,7 @@ function path_form_alter(&$form, $form_state, $form_id) {
+     $form['path']['path'] = array(
+       '#type' => 'textfield',
+       '#default_value' => $path,
+-      '#maxlength' => 250,
++      '#maxlength' => 128,
+       '#collapsible' => TRUE,
+       '#collapsed' => TRUE,
+       '#description' => t('Optionally specify an alternative URL by which this node can be accessed. For example, type "about" when writing an about page. Use a relative path and don\'t add a trailing slash or the URL alias won\'t work.'),
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index e944c5e..3ec074f 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.admin.inc,v 1.63.2.4 2008/10/16 20:23:37 dries Exp $
++// $Id: system.admin.inc,v 1.63.2.5 2008/11/26 13:54:33 dries Exp $
+ 
+ /**
+  * @file
+@@ -1346,9 +1346,6 @@ function system_performance_settings() {
+     '#submit' => array('system_clear_cache_submit'),
+   );
+ 
+-  $form['#submit'][] = 'drupal_clear_css_cache';
+-  $form['#submit'][] = 'drupal_clear_js_cache';
+-
+   return system_settings_form($form);
+ }
+ 
+diff --git a/modules/system/system.module b/modules/system/system.module
+index 1ac2d8e..88a6a2c 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.module,v 1.585.2.22 2008/10/22 19:26:02 goba Exp $
++// $Id: system.module,v 1.585.2.24 2008/12/10 22:30:14 goba Exp $
+ 
+ /**
+  * @file
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.6');
++define('VERSION', '6.7');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/translation/translation.module b/modules/translation/translation.module
+index b231869..717462a 100644
+--- a/modules/translation/translation.module
++++ b/modules/translation/translation.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: translation.module,v 1.23.2.2 2008/10/16 11:57:52 goba Exp $
++// $Id: translation.module,v 1.23.2.3 2008/12/10 20:35:06 goba Exp $
+ 
+ /**
+  * @file
+@@ -321,7 +321,7 @@ function translation_path_get_translations($path) {
+ }
+ 
+ /**
+- * Implementation of hook_alter_translation_link().
++ * Implementation of hook_translation_link_alter().
+  *
+  * Replaces links with pointers to translated versions of the content.
+  */
+@@ -339,4 +339,3 @@ function translation_translation_link_alter(&$links, $path) {
+     }
+   }
+ }
+-
+diff --git a/modules/user/user.module b/modules/user/user.module
+index b46ac82..c7e611b 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: user.module,v 1.892.2.8 2008/10/08 20:12:18 goba Exp $
++// $Id: user.module,v 1.892.2.9 2008/11/05 14:13:03 dries Exp $
+ 
+ /**
+  * @file
+@@ -482,7 +482,7 @@ function user_access($string, $account = NULL, $reset = FALSE) {
+   static $perm = array();
+ 
+   if ($reset) {
+-    unset($perm);
++    $perm = array();
+   }
+ 
+   if (is_null($account)) {
+diff --git a/robots.txt b/robots.txt
+index c9a01c7..752a8a8 100644
+--- a/robots.txt
++++ b/robots.txt
+@@ -1,4 +1,4 @@
+-# $Id: robots.txt,v 1.9 2007/06/27 22:37:44 goba Exp $
++# $Id: robots.txt,v 1.9.2.1 2008/12/10 20:12:19 goba Exp $
+ #
+ # robots.txt
+ #
+@@ -20,27 +20,25 @@
+ User-agent: *
+ Crawl-delay: 10
+ # Directories
+-Disallow: /database/
+ Disallow: /includes/
+ Disallow: /misc/
+ Disallow: /modules/
++Disallow: /profiles/
++Disallow: /scripts/
+ Disallow: /sites/
+ Disallow: /themes/
+-Disallow: /scripts/
+-Disallow: /updates/
+-Disallow: /profiles/
+ # Files
+-Disallow: /xmlrpc.php
++Disallow: /CHANGELOG.txt
+ Disallow: /cron.php
+-Disallow: /update.php
+-Disallow: /install.php
+-Disallow: /INSTALL.txt
+ Disallow: /INSTALL.mysql.txt
+ Disallow: /INSTALL.pgsql.txt
+-Disallow: /CHANGELOG.txt
+-Disallow: /MAINTAINERS.txt
++Disallow: /install.php
++Disallow: /INSTALL.txt
+ Disallow: /LICENSE.txt
++Disallow: /MAINTAINERS.txt
++Disallow: /update.php
+ Disallow: /UPGRADE.txt
++Disallow: /xmlrpc.php
+ # Paths (clean URLs)
+ Disallow: /admin/
+ Disallow: /comment/reply/
+diff --git a/update.php b/update.php
+index 63d6090..6f9ba72 100644
+--- a/update.php
++++ b/update.php
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: update.php,v 1.252 2008/02/03 18:41:16 goba Exp $
++// $Id: update.php,v 1.252.2.2 2008/12/10 22:30:13 goba Exp $
+ 
+ /**
+  * @file
+@@ -369,6 +369,7 @@ function update_info_page() {
+ 
+   update_task_list('info');
+   drupal_set_title('Drupal database update');
++  $token = drupal_get_token('update');
+   $output = '<p>Use this utility to update your database whenever a new release of Drupal or a module is installed.</p><p>For more detailed information, see the <a href="http://drupal.org/node/258">Installation and upgrading handbook</a>. If you are unsure what these terms mean you should probably contact your hosting provider.</p>';
+   $output .= "<ol>\n";
+   $output .= "<li><strong>Back up your database</strong>. This process will change your database values and in case of emergency you may need to revert to a backup.</li>\n";
+@@ -377,7 +378,7 @@ function update_info_page() {
+   $output .= "<li>Install your new files in the appropriate location, as described in the handbook.</li>\n";
+   $output .= "</ol>\n";
+   $output .= "<p>When you have performed the steps above, you may proceed.</p>\n";
+-  $output .= '<form method="post" action="update.php?op=selection"><input type="submit" value="Continue" /></form>';
++  $output .= '<form method="post" action="update.php?op=selection&token='. $token .'"><input type="submit" value="Continue" /></form>';
+   $output .= "\n";
+   return $output;
+ }
+@@ -448,7 +449,7 @@ function update_check_incompatibility($name, $type = 'module') {
+ 
+   // Store values of expensive functions for future use.
+   if (empty($themes) || empty($modules)) {
+-    $themes = system_theme_data();
++    $themes = _system_theme_data();
+     $modules = module_rebuild_cache();
+   }
+ 
+@@ -627,17 +628,21 @@ if (!empty($update_free_access) || $user->uid == 1) {
+ 
+   $op = isset($_REQUEST['op']) ? $_REQUEST['op'] : '';
+   switch ($op) {
+-    // update.php ops
+-    case 'info':
+-      $output = update_info_page();
+-      break;
+-
+     case 'selection':
+-      $output = update_selection_page();
+-      break;
++      if (isset($_GET['token']) && $_GET['token'] == drupal_get_token('update')) {
++        $output = update_selection_page();
++        break;
++      }
+ 
+     case 'Update':
+-      update_batch();
++      if (isset($_GET['token']) && $_GET['token'] == drupal_get_token('update')) {
++        update_batch();
++        break;
++      }
++
++    // update.php ops
++    case 'info':
++      $output = update_info_page();
+       break;
+ 
+     case 'results':

@@ -1,0 +1,907 @@
+diff --git a/.htaccess b/.htaccess
+index e9ee2e2..3a3187f 100644
+--- a/.htaccess
++++ b/.htaccess
+@@ -66,8 +66,14 @@ DirectoryIndex index.php
+   # Cache all files for 2 weeks after access (A).
+   ExpiresDefault A1209600
+ 
+-  # Do not cache dynamically generated pages.
+-  ExpiresByType text/html A1
++  <FilesMatch \.php$>
++    # Do not allow PHP scripts to be cached unless they explicitly send cache
++    # headers themselves. Otherwise all scripts would have to overwrite the
++    # headers set by mod_expires if they want another caching behavior. This may
++    # fail if an error occurs early in the bootstrap process, and it may cause
++    # problems if a non-Drupal PHP file is installed in a subdirectory.
++    ExpiresActive Off
++  </FilesMatch>
+ </IfModule>
+ 
+ # Various rewrite rules.
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index be83a06..ca3abe1 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,5 +1,10 @@
+ // $Id$
+ 
++Drupal 6.15, 2009-12-16
++----------------------
++- Fixed security issues (Cross site scripting), see SA-CORE-2009-009.
++- Fixed a variety of other bugs.
++
+ Drupal 6.14, 2009-09-16
+ ----------------------
+ - Fixed security issues (OpenID association cross site request forgeries,
+@@ -89,7 +94,7 @@ Drupal 6.3, 2008-07-09
+ - Fixed Views compatibility issues (Views for Drupal 6 requires Drupal 6.3+).
+ - Fixed a variety of small bugs.
+ 
+-Drupal 6.2, 2008-04-09 
++Drupal 6.2, 2008-04-09
+ ----------------------
+ - Fixed a variety of small bugs.
+ - Fixed a security issue (Access bypasses), see SA-2008-026.
+@@ -201,6 +206,11 @@ Drupal 6.0, 2008-02-13
+ - Removed old system updates. Updates from Drupal versions prior to 5.x will
+   require upgrading to 5.x before upgrading to 6.x.
+ 
++Drupal 5.21, 2009-12-16
++-----------------------
++- Fixed a security issue (Cross site scripting), see SA-CORE-2009-009.
++- Fixed a variety of small bugs.
++
+ Drupal 5.20, 2009-09-16
+ -----------------------
+ - Avoid security problems resulting from writing Drupal 6-style menu declarations.
+@@ -242,7 +252,7 @@ Drupal 5.13, 2008-12-10
+ -----------------------
+ - fixed a variety of small bugs.
+ - fixed security issues, (Cross site request forgery and Cross site scripting), see SA-2008-073
+-- updated robots.txt and .htaccess to match current file use. 
++- updated robots.txt and .htaccess to match current file use.
+ 
+ Drupal 5.12, 2008-10-22
+ -----------------------
+diff --git a/includes/actions.inc b/includes/actions.inc
+index 3f49e46..46ad8f6 100644
+--- a/includes/actions.inc
++++ b/includes/actions.inc
+@@ -167,17 +167,21 @@ function actions_list($reset = FALSE) {
+ }
+ 
+ /**
+- * Retrieve all action instances from the database.
++ * Retrieves all action instances from the database.
+  *
+- * Compare with actions_list() which gathers actions by
+- * invoking hook_action_info(). The two are synchronized
+- * by visiting /admin/build/actions (when actions.module is
+- * enabled) which runs actions_synchronize().
++ * Compare with actions_list(), which gathers actions by invoking
++ * hook_action_info(). The actions returned by this function and the actions
++ * returned by actions_list() are partially synchronized. Non-configurable
++ * actions from hook_action_info() implementations are put into the database
++ * when actions_synchronize() is called, which happens when
++ * admin/settings/actions is visited. Configurable actions are not added to
++ * the database until they are configured in the user interface, in which case
++ * a database row is created for each configuration of each action.
+  *
+  * @return
+- *   Associative array keyed by action ID. Each value is
+- *   an associative array with keys 'callback', 'description',
+- *   'type' and 'configurable'.
++ *   Associative array keyed by action ID. Each value is an
++ *   associative array with keys 'callback', 'description', 'type' and
++ *   'configurable'.
+  */
+ function actions_get_all_actions() {
+   $actions = array();
+diff --git a/includes/cache.inc b/includes/cache.inc
+index c2945bc..3d04982 100644
+--- a/includes/cache.inc
++++ b/includes/cache.inc
+@@ -169,7 +169,7 @@ function cache_clear_all($cid = NULL, $table = NULL, $wildcard = FALSE) {
+   else {
+     if ($wildcard) {
+       if ($cid == '*') {
+-        db_query("DELETE FROM {". $table ."}");
++        db_query("TRUNCATE TABLE {". $table ."}");
+       }
+       else {
+         db_query("DELETE FROM {". $table ."} WHERE cid LIKE '%s%%'", $cid);
+diff --git a/includes/common.inc b/includes/common.inc
+index ff814c8..5267279 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -617,7 +617,7 @@ function drupal_error_handler($errno, $message, $filename, $line, $context) {
+     return;
+   }
+ 
+-  if ($errno & (E_ALL ^ E_NOTICE ^ E_DEPRECATED)) {
++  if ($errno & (E_ALL ^ E_DEPRECATED ^ E_NOTICE)) {
+     $types = array(1 => 'error', 2 => 'warning', 4 => 'parse error', 8 => 'notice', 16 => 'core error', 32 => 'core warning', 64 => 'compile error', 128 => 'compile warning', 256 => 'user error', 512 => 'user warning', 1024 => 'user notice', 2048 => 'strict warning', 4096 => 'recoverable fatal error');
+ 
+     // For database errors, we want the line number/file name of the place that
+@@ -1110,7 +1110,7 @@ function format_xml_elements($array) {
+           $output .= drupal_attributes($value['attributes']);
+         }
+ 
+-        if ($value['value'] != '') {
++        if (isset($value['value']) && $value['value'] != '') {
+           $output .= '>'. (is_array($value['value']) ? format_xml_elements($value['value']) : check_plain($value['value'])) .'</'. $value['key'] .">\n";
+         }
+         else {
+@@ -2009,8 +2009,7 @@ function drupal_load_stylesheet($file, $optimize = NULL) {
+       // Perform some safe CSS optimizations.
+       $contents = preg_replace('<
+         \s*([@{}:;,]|\)\s|\s\()\s* |  # Remove whitespace around separators, but keep space around parentheses.
+-        /\*([^*\\\\]|\*(?!/))+\*/ |   # Remove comments that are not CSS hacks.
+-        [\n\r]                        # Remove line breaks.
++        /\*([^*\\\\]|\*(?!/))+\*/     # Remove comments that are not CSS hacks.
+         >x', '\1', $contents);
+     }
+ 
+@@ -2662,7 +2661,7 @@ function page_set_cache() {
+ function drupal_cron_run() {
+   // Try to allocate enough time to run all the hook_cron implementations.
+   if (function_exists('set_time_limit')) {
+-    @set_time_limit($time_limit);
++    @set_time_limit(240);
+   }
+ 
+   // Fetch the cron semaphore
+diff --git a/includes/form.inc b/includes/form.inc
+index 3bb07a4..701a28d 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -48,7 +48,7 @@
+ 
+ /**
+  * Retrieves a form from a constructor function, or from the cache if
+- * the form was built in a previous page-load. The form is then passesed
++ * the form was built in a previous page-load. The form is then passed
+  * on for processing, after and rendered for display if necessary.
+  *
+  * @param $form_id
+@@ -276,7 +276,8 @@ function form_get_cache($form_build_id, &$form_state) {
+  * $form_state = array();
+  * $form_state['values']['name'] = 'robo-user';
+  * $form_state['values']['mail'] = 'robouser@example.com';
+- * $form_state['values']['pass'] = 'password';
++ * $form_state['values']['pass']['pass1'] = 'password';
++ * $form_state['values']['pass']['pass2'] = 'password';
+  * $form_state['values']['op'] = t('Create new account');
+  * drupal_execute('user_register', $form_state);
+  *
+@@ -2314,12 +2315,18 @@ function form_clean_id($id = NULL, $flush = FALSE) {
+  *     array('my_function_2', array()),
+  *   ),
+  *   'finished' => 'my_finished_callback',
++ *   'file' => 'path_to_file_containing_myfunctions',
+  * );
+  * batch_set($batch);
+  * // only needed if not inside a form _submit handler :
+  * batch_process();
+  * @endcode
+  *
++ * Note: if the batch 'title', 'init_message', 'progress_message', or
++ * 'error_message' could contain any user input, it is the responsibility of
++ * the code calling batch_set() to sanitize them first with a function like
++ * check_plain() or filter_xss().
++ *
+  * Sample batch operations:
+  * @code
+  * // Simple and artificial: load a node of a given type for a given user
+@@ -2387,38 +2394,37 @@ function form_clean_id($id = NULL, $flush = FALSE) {
+  */
+ 
+ /**
+- * Open a new batch.
++ * Opens a new batch.
+  *
+  * @param $batch
+- *   An array defining the batch. The following keys can be used:
+- *     'operations': an array of function calls to be performed.
+- *        Example:
+- *        @code
+- *        array(
+- *          array('my_function_1', array($arg1)),
+- *          array('my_function_2', array($arg2_1, $arg2_2)),
+- *        )
+- *        @endcode
+- *     All the other values below are optional.
+- *     batch_init() provides default values for the messages.
+- *     'title': title for the progress page.
+- *       Defaults to t('Processing').
+- *     'init_message': message displayed while the processing is initialized.
+- *       Defaults to t('Initializing.').
+- *     'progress_message': message displayed while processing the batch.
+- *       Available placeholders are @current, @remaining, @total and @percent.
+- *       Defaults to t('Remaining @remaining of @total.').
+- *     'error_message': message displayed if an error occurred while processing
+- *       the batch.
+- *       Defaults to t('An error has occurred.').
+- *     'finished': the name of a function to be executed after the batch has
+- *       completed. This should be used to perform any result massaging that
+- *       may be needed, and possibly save data in $_SESSION for display after
+- *       final page redirection.
+- *     'file': the path to the file containing the definitions of the
+- *       'operations' and 'finished' functions, for instance if they don't
+- *       reside in the original '.module' file. The path should be relative to
+- *       the base_path(), and thus should be built using drupal_get_path().
++ *   An array defining the batch. The following keys can be used -- only
++ *   'operations' is required, and batch_init() provides default values for
++ *   the messages.
++ *   - 'operations': Array of function calls to be performed.
++ *     Example:
++ *     @code
++ *     array(
++ *       array('my_function_1', array($arg1)),
++ *       array('my_function_2', array($arg2_1, $arg2_2)),
++ *     )
++ *     @endcode
++ *   - 'title': Title for the progress page. Only safe strings should be passed.
++ *     Defaults to t('Processing').
++ *   - 'init_message': Message displayed while the processing is initialized.
++ *     Defaults to t('Initializing.').
++ *   - 'progress_message': Message displayed while processing the batch.
++ *     Available placeholders are @current, @remaining, @total, @percentage,
++ *     @estimate and @elapsed. Defaults to t('Completed @current of @total.').
++ *   - 'error_message': Message displayed if an error occurred while processing
++ *     the batch. Defaults to t('An error has occurred.').
++ *   - 'finished': Name of a function to be executed after the batch has
++ *     completed. This should be used to perform any result massaging that
++ *     may be needed, and possibly save data in $_SESSION for display after
++ *     final page redirection.
++ *   - 'file': Path to the file containing the definitions of the
++ *     'operations' and 'finished' functions, for instance if they don't
++ *     reside in the main .module file. The path should be relative to
++ *     base_path(), and thus should be built using drupal_get_path().
+  *
+  * Operations are added as new batch sets. Batch sets are used to ensure
+  * clean code independence, ensuring that several batches submitted by
+@@ -2473,7 +2479,7 @@ function batch_set($batch_definition) {
+ }
+ 
+ /**
+- * Process the batch.
++ * Processes the batch.
+  *
+  * Unless the batch has been marked with 'progressive' = FALSE, the function
+  * issues a drupal_goto and thus ends page execution.
+@@ -2540,7 +2546,7 @@ function batch_process($redirect = NULL, $url = NULL) {
+ }
+ 
+ /**
+- * Retrieve the current batch.
++ * Retrieves the current batch.
+  */
+ function &batch_get() {
+   static $batch = array();
+diff --git a/includes/menu.inc b/includes/menu.inc
+index 36c95cc..05da3c0 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -1503,7 +1503,25 @@ function menu_set_active_item($path) {
+ }
+ 
+ /**
+- * Set (or get) the active trail for the current page - the path to root in the menu tree.
++ * Sets or gets the active trail (path to root menu root) of the current page.
++ *
++ * @param $new_trail
++ *   Menu trail to set, or NULL to use previously-set or calculated trail. If
++ *   supplying a trail, use the same format as the return value (see below).
++ * @return
++ *   Path to menu root of the current page, as an array of menu link items,
++ *   starting with the site's home page. Each link item is an associative array
++ *   with the following components:
++ *   - 'title': Title of the item.
++ *   - 'href': Drupal path of the item.
++ *   - 'localized_options': Options for passing into the l() function.
++ *   - 'type': A menu type constant, such as MENU_DEFAULT_LOCAL_TASK, or 0 to
++ *     indicate it's not really in the menu (used for the home page item).
++ *   If $new_trail is supplied, the value is saved in a static variable and
++ *   returned. If $new_trail is not supplied, and there is a saved value from
++ *   a previous call, the saved value is returned. If $new_trail is not supplied
++ *   and there is no saved value, the path to the current page is calculated,
++ *   saved as the static value, and returned.
+  */
+ function menu_set_active_trail($new_trail = NULL) {
+   static $trail;
+@@ -1566,7 +1584,9 @@ function menu_set_active_trail($new_trail = NULL) {
+ }
+ 
+ /**
+- * Get the active trail for the current page - the path to root in the menu tree.
++ * Gets the active trail (path to root menu root) of the current page.
++ *
++ * See menu_set_active_trail() for details of return value.
+  */
+ function menu_get_active_trail() {
+   return menu_set_active_trail();
+diff --git a/includes/module.inc b/includes/module.inc
+index fbd9564..df914d0 100644
+--- a/includes/module.inc
++++ b/includes/module.inc
+@@ -243,13 +243,25 @@ function module_load_install($module) {
+ 
+ /**
+  * Load a module include file.
++ * 
++ * Examples:
++ * @code
++ *   // Load node.admin.inc from the node module.
++ *   module_load_include('inc', 'node', 'node.admin');
++ *   // Load content_types.inc from the node module.
++ *   module_load_include('inc', 'node', 'content_types');  
++ * @endcode
++ * 
++ * Do not use this function to load an install file. Use module_load_install()
++ * instead.
+  *
+  * @param $type
+  *   The include file's type (file extension).
+  * @param $module
+  *   The module to which the include file belongs.
+  * @param $name
+- *   Optionally, specify the file name. If not set, the module's name is used.
++ *   Optionally, specify the base file name (without the $type extension). 
++ *   If not set, $module is used.
+  */
+ function module_load_include($type, $module, $name = NULL) {
+   if (empty($name)) {
+@@ -356,19 +368,19 @@ function module_disable($module_list) {
+  * Allow modules to interact with the Drupal core.
+  *
+  * Drupal's module system is based on the concept of "hooks". A hook is a PHP
+- * function that is named foo_bar(), where "foo" is the name of the module (whose
+- * filename is thus foo.module) and "bar" is the name of the hook. Each hook has
+- * a defined set of parameters and a specified result type.
++ * function that is named foo_bar(), where "foo" is the name of the module
++ * (whose filename is thus foo.module) and "bar" is the name of the hook. Each
++ * hook has a defined set of parameters and a specified result type.
+  *
+- * To extend Drupal, a module need simply implement a hook. When Drupal wishes to
+- * allow intervention from modules, it determines which modules implement a hook
+- * and call that hook in all enabled modules that implement it.
++ * To extend Drupal, a module need simply implement a hook. When Drupal wishes
++ * to allow intervention from modules, it determines which modules implement a
++ * hook and calls that hook in all enabled modules that implement it.
+  *
+  * The available hooks to implement are explained here in the Hooks section of
+  * the developer documentation. The string "hook" is used as a placeholder for
+- * the module name is the hook definitions. For example, if the module file is
+- * called example.module, then hook_help() as implemented by that module would be
+- * defined as example_help().
++ * the module name in the hook definitions. For example, if the module file is
++ * called example.module, then hook_help() as implemented by that module would
++ * be defined as example_help().
+  */
+ 
+ /**
+diff --git a/includes/path.inc b/includes/path.inc
+index 99efc0e..16b2b20 100644
+--- a/includes/path.inc
++++ b/includes/path.inc
+@@ -231,7 +231,7 @@ function drupal_is_front_page() {
+  *   String containing a set of patterns separated by \n, \r or \r\n.
+  *
+  * @return
+- *   Boolean value: TRUE if the path matches a pattern, FALSE otherwise.
++ *   1 if there is a match, 0 if there is not a match.
+  */
+ function drupal_match_path($path, $patterns) {
+   static $regexps;
+diff --git a/includes/xmlrpcs.inc b/includes/xmlrpcs.inc
+index d43f383..063801b 100644
+--- a/includes/xmlrpcs.inc
++++ b/includes/xmlrpcs.inc
+@@ -64,10 +64,13 @@ function xmlrpc_server($callbacks) {
+   if ($xmlrpc_server->message->messagetype != 'methodCall') {
+     xmlrpc_server_error(-32600, t('Server error. Invalid XML-RPC. Request must be a methodCall.'));
+   }
++  if (!isset($xmlrpc_server->message->params)) {
++    $xmlrpc_server->message->params = array();
++  }
+   xmlrpc_server_set($xmlrpc_server);
+   $result = xmlrpc_server_call($xmlrpc_server, $xmlrpc_server->message->methodname, $xmlrpc_server->message->params);
+ 
+-  if ($result->is_error) {
++  if (is_object($result) && !empty($result->is_error)) {
+     xmlrpc_server_error($result);
+   }
+   // Encode the result
+diff --git a/modules/block/block.module b/modules/block/block.module
+index 3038c46..cf7ec44 100644
+--- a/modules/block/block.module
++++ b/modules/block/block.module
+@@ -298,6 +298,19 @@ function _block_rehash() {
+   return $blocks;
+ }
+ 
++/**
++ * Returns information from database about a user-created (custom) block.
++ *
++ * @param $bid
++ *   ID of the block to get information for.
++ * @return
++ *   Associative array of information stored in the database for this block.
++ *   Array keys:
++ *   - bid: Block ID.
++ *   - info: Block description.
++ *   - body: Block contents.
++ *   - format: Filter ID of the filter format for the body.
++ */
+ function block_box_get($bid) {
+   return db_fetch_array(db_query("SELECT * FROM {boxes} WHERE bid = %d", $bid));
+ }
+@@ -336,6 +349,19 @@ function block_box_form($edit = array()) {
+   return $form;
+ }
+ 
++/**
++ * Saves a user-created block in the database.
++ *
++ * @param $edit
++ *   Associative array of fields to save. Array keys:
++ *   - info: Block description.
++ *   - body: Block contents.
++ *   - format: Filter ID of the filter format for the body.
++ * @param $delta
++ *   Block ID of the block to save.
++ * @return
++ *   Always returns TRUE.
++ */
+ function block_box_save($edit, $delta) {
+   if (!filter_access($edit['format'])) {
+     $edit['format'] = FILTER_FORMAT_DEFAULT;
+diff --git a/modules/contact/contact.admin.inc b/modules/contact/contact.admin.inc
+index 38360d4..e83afa4 100644
+--- a/modules/contact/contact.admin.inc
++++ b/modules/contact/contact.admin.inc
+@@ -13,7 +13,7 @@ function contact_admin_categories() {
+   $result = db_query('SELECT cid, category, recipients, selected FROM {contact} ORDER BY weight, category');
+   $rows = array();
+   while ($category = db_fetch_object($result)) {
+-    $rows[] = array($category->category, $category->recipients, ($category->selected ? t('Yes') : t('No')), l(t('edit'), 'admin/build/contact/edit/'. $category->cid), l(t('delete'), 'admin/build/contact/delete/'. $category->cid));
++    $rows[] = array(check_plain($category->category), check_plain($category->recipients), ($category->selected ? t('Yes') : t('No')), l(t('edit'), 'admin/build/contact/edit/'. $category->cid), l(t('delete'), 'admin/build/contact/delete/'. $category->cid));
+   }
+   $header = array(t('Category'), t('Recipients'), t('Selected'), array('data' => t('Operations'), 'colspan' => 2));
+ 
+diff --git a/modules/contact/contact.module b/modules/contact/contact.module
+index 4557029..ab369ef 100644
+--- a/modules/contact/contact.module
++++ b/modules/contact/contact.module
+@@ -110,19 +110,39 @@ function contact_menu() {
+ }
+ 
+ /**
+- * Determine if a user can access to the contact tab.
++ * Menu access callback for a user's personal contact form.
++ *
++ * @param $account
++ *   A user account object.
++ * @return
++ *   TRUE if the current user has access to the requested user's contact form,
++ *   or FALSE otherwise.
+  */
+ function _contact_user_tab_access($account) {
+   global $user;
+-  if (!isset($account->contact)) {
+-    $account->contact = FALSE;
++
++  // Anonymous users cannot use or have contact forms.
++  if (!$user->uid || !$account->uid) {
++    return FALSE;
+   }
+-  return
+-    $account && $user->uid &&
+-    (
+-      ($user->uid != $account->uid && $account->contact) ||
+-      user_access('administer users')
+-    );
++
++  // User administrators should always have access to personal contact forms.
++  if (user_access('administer users')) {
++    return TRUE;
++  }
++
++  // Users may not contact themselves.
++  if ($user->uid == $account->uid) {
++    return FALSE;
++  }
++
++  // If the requested user has disabled their contact form, or this preference
++  // has not yet been saved, do not allow users to contact them.
++  if (empty($account->contact)) {
++    return FALSE;
++  }
++
++  return TRUE;
+ }
+ 
+ /**
+diff --git a/modules/menu/menu.admin.inc b/modules/menu/menu.admin.inc
+index e566889..a8e8b49 100644
+--- a/modules/menu/menu.admin.inc
++++ b/modules/menu/menu.admin.inc
+@@ -3,7 +3,7 @@
+ 
+ /**
+  * @file
+- * Administrative page callbaks for menu module.
++ * Administrative page callbacks for menu module.
+  */
+ 
+ /**
+@@ -15,6 +15,7 @@ function menu_overview_page() {
+   while ($menu = db_fetch_array($result)) {
+     $menu['href'] = 'admin/build/menu-customize/'. $menu['menu_name'];
+     $menu['localized_options'] = array();
++    $menu['description'] = filter_xss_admin($menu['description']);
+     $content[] = $menu;
+   }
+   return theme('admin_block_content', $content);
+diff --git a/modules/node/node.module b/modules/node/node.module
+index b94eab8..2f56c79 100644
+--- a/modules/node/node.module
++++ b/modules/node/node.module
+@@ -2320,7 +2320,7 @@ function node_access_rebuild($batch_mode = FALSE) {
+     else {
+       // Try to allocate enough time to rebuild node grants
+       if (function_exists('set_time_limit')) {
+-        @set_time_limit($time_limit);
++        @set_time_limit(240);
+       }
+       $result = db_query("SELECT nid FROM {node}");
+       while ($node = db_fetch_object($result)) {
+diff --git a/modules/openid/openid.inc b/modules/openid/openid.inc
+index 3671755..0e9cfb3 100644
+--- a/modules/openid/openid.inc
++++ b/modules/openid/openid.inc
+@@ -75,7 +75,7 @@ function openid_redirect_form(&$form_state, $url, $message) {
+  */
+ function _openid_is_xri($identifier) {
+   // Strip the xri:// scheme from the identifier if present.
+-  if (stripos($identifier, 'xri://') !== FALSE) {
++  if (strpos(strtolower($identifier), 'xri://') !== FALSE) {
+     $identifier = substr($identifier, 6);
+   }
+ 
+diff --git a/modules/openid/openid.module b/modules/openid/openid.module
+index b79ff99..1c0bb8f 100644
+--- a/modules/openid/openid.module
++++ b/modules/openid/openid.module
+@@ -125,6 +125,12 @@ function openid_form_alter(&$form, $form_state, $form_id) {
+       $form['pass']['#value'] = user_password();
+     }
+     $form['auth_openid'] = array('#type' => 'hidden', '#value' => $_SESSION['openid']['values']['auth_openid']);
++    $form['openid_display'] = array(
++      '#type' => 'item',
++      '#title' => t('Your OpenID'),
++      '#description' => t('This OpenID will be attached to your account after registration.'),
++      '#value' => check_plain($_SESSION['openid']['values']['auth_openid']),
++    );
+   }
+   return $form;
+ }
+@@ -394,19 +400,34 @@ function openid_authentication($response) {
+   elseif (variable_get('user_register', 1)) {
+     // Register new user
+     $form_state['redirect'] = NULL;
+-    $form_state['values']['name'] = (empty($response['openid.sreg.nickname'])) ? $identity : $response['openid.sreg.nickname'];
++    $form_state['values']['name'] = (empty($response['openid.sreg.nickname'])) ? '' : $response['openid.sreg.nickname'];
+     $form_state['values']['mail'] = (empty($response['openid.sreg.email'])) ? '' : $response['openid.sreg.email'];
+     $form_state['values']['pass']  = user_password();
+     $form_state['values']['status'] = variable_get('user_register', 1) == 1;
+     $form_state['values']['response'] = $response;
+     $form_state['values']['auth_openid'] = $identity;
+-    $form = drupal_retrieve_form('user_register', $form_state);
+-    drupal_prepare_form('user_register', $form, $form_state);
+-    drupal_validate_form('user_register', $form, $form_state);
+-    if (form_get_errors()) {
++
++    if (empty($response['openid.sreg.email']) && empty($response['openid.sreg.nickname'])) {
++      drupal_set_message(t('Please complete the registration by filling out the form below. If you already have an account, you can <a href="@login">log in</a> now and add your OpenID under "My account".', array('@login' => url('user/login'))), 'warning');
++      $success = FALSE;
++    }
++    else {
++      $form = drupal_retrieve_form('user_register', $form_state);
++      drupal_prepare_form('user_register', $form, $form_state);
++      drupal_validate_form('user_register', $form, $form_state);
++      $success = !form_get_errors();
++      if (!$success) {
++        drupal_set_message(t('Account registration using the information provided by your OpenID provider failed due to the reasons listed below. Please complete the registration by filling out the form below. If you already have an account, you can <a href="@login">log in</a> now and add your OpenID under "My account".', array('@login' => url('user/login'))), 'warning');
++        // Append form validation errors below the above warning.
++        $messages = drupal_get_messages('error');
++        foreach ($messages['error'] as $message) {
++          drupal_set_message( $message, 'error');
++        }
++      }
++    }
++    if (!$success) {
+       // We were unable to register a valid new user, redirect to standard
+       // user/register and prefill with the values we received.
+-      drupal_set_message(t('OpenID registration failed for the reasons listed. You may register now, or if you already have an account you can <a href="@login">log in</a> now and add your OpenID under "My Account"', array('@login' => url('user/login'))), 'error');
+       $_SESSION['openid']['values'] = $form_state['values'];
+       // We'll want to redirect back to the same place.
+       $destination = drupal_get_destination();
+diff --git a/modules/ping/ping.module b/modules/ping/ping.module
+index fb2b204..6b27077 100644
+--- a/modules/ping/ping.module
++++ b/modules/ping/ping.module
+@@ -28,7 +28,9 @@ function ping_cron() {
+   global $base_url;
+ 
+   if (variable_get('site_name', 0)) {
+-    if (db_result(db_query("SELECT COUNT(*) FROM {node} WHERE status = 1 AND (created > '". variable_get('cron_last', time()) ."' OR changed > '". variable_get('cron_last', time()) ."')"))) {
++    $cron_last = variable_get('cron_last', time());
++    // Query changed first since usually changed >= created.
++    if (db_result(db_query('SELECT COUNT(*) FROM {node} WHERE status = 1 AND changed > %d', $cron_last)) || db_result(db_query('SELECT COUNT(*) FROM {node} WHERE status = 1 AND created > %d', $cron_last))) {
+       _ping_notify(variable_get('site_name', ''), $base_url);
+     }
+   }
+diff --git a/modules/search/search.module b/modules/search/search.module
+index 2b3362f..bc7db28 100644
+--- a/modules/search/search.module
++++ b/modules/search/search.module
+@@ -1072,7 +1072,6 @@ function search_box(&$form_state, $form_id) {
+   );
+   $form['submit'] = array('#type' => 'submit', '#value' => t('Search'));
+   $form['#submit'][] = 'search_box_form_submit';
+-  $form['#validate'][] = 'search_box_form_validate';
+ 
+   return $form;
+ }
+diff --git a/modules/system/system.install b/modules/system/system.install
+index cb914fd..02bb30a 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -358,6 +358,11 @@ function system_install() {
+     drupal_install_schema($module);
+   }
+ 
++  // Clear out module list and hook implementation statics before calling
++  // system_theme_data().
++  module_list(TRUE, FALSE);
++  module_implements('', FALSE, TRUE);
++
+   // Load system theme data appropriately.
+   system_theme_data();
+ 
+diff --git a/modules/system/system.module b/modules/system/system.module
+index 75d94ca..f886d4c 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.14');
++define('VERSION', '6.15');
+ 
+ /**
+  * Core API compatibility.
+@@ -643,7 +643,7 @@ function system_admin_menu_block($item) {
+     }
+     // Prepare for sorting as in function _menu_tree_check_access().
+     // The weight is offset so it is always positive, with a uniform 5-digits.
+-    $content[(50000 + $item['weight']) .' '. $item['title'] .' '. $item['mlid']] = $item;
++    $content[(50000 + $item['weight']) .' '. drupal_strtolower($item['title']) .' '. $item['mlid']] = $item;
+   }
+   ksort($content);
+   return $content;
+diff --git a/modules/update/update.compare.inc b/modules/update/update.compare.inc
+index e391fb0..b89a408 100644
+--- a/modules/update/update.compare.inc
++++ b/modules/update/update.compare.inc
+@@ -52,7 +52,22 @@ function update_get_projects() {
+  */
+ function _update_process_info_list(&$projects, $list, $project_type) {
+   foreach ($list as $file) {
+-    if (empty($file->status)) {
++    // A disabled base theme of an enabled sub-theme still has all of its code
++    // run by the sub-theme, so we include it in our "enabled" projects list.
++    if (!$file->status && !empty($file->sub_themes)) {
++      foreach ($file->sub_themes as $key => $name) {
++        // Build a list of enabled sub-themes.
++        if ($list[$key]->status) {
++          $file->enabled_sub_themes[$key] = $name;
++        }
++      }
++      // If there are no enabled subthemes, we should ingore this theme and go
++      // on to the next one.
++      if (empty($file->enabled_sub_themes)) {
++        continue;
++      }
++    }
++    elseif (empty($file->status)) {
+       // Skip disabled modules or themes.
+       continue;
+     }
+@@ -84,21 +99,45 @@ function _update_process_info_list(&$projects, $list, $project_type) {
+       $file->info['_info_file_ctime'] = filectime($info_filename);
+     }
+ 
++    if (!isset($file->info['datestamp'])) {
++      $file->info['datestamp'] = 0;
++    }
++
+     $project_name = $file->info['project'];
++
++    // Add a list of sub-themes that "depend on" the project and a list of base
++    // themes that are "required by" the project.
++    if ($project_name == 'drupal') {
++      // Drupal core is always required, so this extra info would be noise.
++      $sub_themes = array();
++      $base_themes = array();
++    }
++    else {
++      // Add list of enabled sub-themes.
++      $sub_themes = !empty($file->enabled_sub_themes) ? $file->enabled_sub_themes : array();
++      // Add list of base themes.
++      $base_themes = !empty($file->base_themes) ? $file->base_themes : array();
++    }
++
+     if (!isset($projects[$project_name])) {
+       // Only process this if we haven't done this project, since a single
+       // project can have multiple modules or themes.
+       $projects[$project_name] = array(
+         'name' => $project_name,
+         'info' => $file->info,
+-        'datestamp' => isset($file->info['datestamp']) ? $file->info['datestamp'] : 0,
++        'datestamp' => $file->info['datestamp'],
+         'includes' => array($file->name => $file->info['name']),
+         'project_type' => $project_name == 'drupal' ? 'core' : $project_type,
++        'sub_themes' => $sub_themes,
++        'base_themes' => $base_themes,
+       );
+     }
+     else {
+       $projects[$project_name]['includes'][$file->name] = $file->info['name'];
+       $projects[$project_name]['info']['_info_file_ctime'] = max($projects[$project_name]['info']['_info_file_ctime'], $file->info['_info_file_ctime']);
++      $projects[$project_name]['datestamp'] = max($projects[$project_name]['datestamp'], $file->info['datestamp']);
++      $projects[$project_name]['sub_themes'] = array_merge($projects[$project_name]['sub_themes'], $sub_themes);
++      $projects[$project_name]['base_themes'] = array_merge($projects[$project_name]['base_themes'], $base_themes);
+     }
+   }
+ }
+diff --git a/modules/update/update.module b/modules/update/update.module
+index 8e8f9c2..b6b595a 100644
+--- a/modules/update/update.module
++++ b/modules/update/update.module
+@@ -557,7 +557,7 @@ function _update_cache_set($cid, $data, $expire) {
+   }
+ }
+ 
+-/** 
++/**
+  * Retrieve data from the private update status cache table.
+  *
+  * @param $cid
+@@ -585,7 +585,7 @@ function _update_cache_get($cid) {
+  */
+ function _update_cache_clear($cid = NULL) {
+   if (empty($cid)) {
+-    db_query("DELETE FROM {cache_update}");
++    db_query("TRUNCATE TABLE {cache_update}");
+   }
+   else {
+     db_query("DELETE FROM {cache_update} WHERE cid = '%s'", $cid);
+diff --git a/modules/update/update.report.inc b/modules/update/update.report.inc
+index 816d53a..94ba82e 100644
+--- a/modules/update/update.report.inc
++++ b/modules/update/update.report.inc
+@@ -183,12 +183,33 @@ function theme_update_report($data) {
+     $row .= t('Includes: %includes', array('%includes' => implode(', ', $project['includes'])));
+     $row .= "</div>\n";
+ 
++    if (!empty($project['base_themes'])) {
++      $row .= '<div class="basethemes">';
++      sort($project['base_themes']);
++      // We use !dependencies and manually call theme('placeholder') here to
++      // avoid breakding the D6 string freeze. This identical string is
++      // already in modules/system/system.admin.inc.
++      $row .= t('Depends on: !dependencies', array('!dependencies' => theme('placeholder', implode(', ', $project['base_themes']))));
++      $row .= "</div>\n";
++    }
++
++    if (!empty($project['sub_themes'])) {
++      $row .= '<div class="subthemes">';
++      sort($project['sub_themes']);
++      // We use !required and manually call theme('placeholder') here to avoid
++      // breakding the D6 string freeze. This identical string is already in
++      // modules/system/system.admin.inc.
++      $row .= t('Required by: !required', array('!required' => theme('placeholder', implode(', ', $project['sub_themes']))));
++      $row .= "</div>\n";
++    }
++
+     $row .= "</div>\n"; // info div.
+ 
+     if (!isset($rows[$project['project_type']])) {
+       $rows[$project['project_type']] = array();
+     }
+-    $rows[$project['project_type']][] = array(
++    $row_key = isset($project['title']) ? drupal_strtolower($project['title']) : drupal_strtolower($project['name']);
++    $rows[$project['project_type']][$row_key] = array(
+       'class' => $class,
+       'data' => array($row),
+     );
+@@ -203,6 +224,7 @@ function theme_update_report($data) {
+   );
+   foreach ($project_types as $type_name => $type_label) {
+     if (!empty($rows[$type_name])) {
++      ksort($rows[$type_name]);
+       $output .= "\n<h3>". $type_label ."</h3>\n";
+       $output .= theme('table', $header, $rows[$type_name], array('class' => 'update'));
+     }
+diff --git a/modules/user/user-profile.tpl.php b/modules/user/user-profile.tpl.php
+index 9d24f2a..e100d6d 100644
+--- a/modules/user/user-profile.tpl.php
++++ b/modules/user/user-profile.tpl.php
+@@ -25,21 +25,19 @@
+  * markup for the group.
+  *
+  * To check for all available data within $profile, use the code below.
+- *
+  * @code
+  *   print '<pre>'. check_plain(print_r($profile, 1)) .'</pre>';
+  * @endcode
+  *
+- * @see user-profile-category.tpl.php
+- *   Where the html is handled for the group.
+- * @see user-profile-field.tpl.php
+- *   Where the html is handled for each item in the group.
+- *
+  * Available variables:
+  *   - $user_profile: All user profile data. Ready for print.
+  *   - $profile: Keyed array of profile categories and their items or other data
+  *     provided by modules.
+  *
++ * @see user-profile-category.tpl.php
++ *   Where the html is handled for the group.
++ * @see user-profile-item.tpl.php
++ *   Where the html is handled for each item in the group.
+  * @see template_preprocess_user_profile()
+  */
+ ?>
+diff --git a/modules/user/user.module b/modules/user/user.module
+index 3e31a7e..9f59cf9 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -1117,12 +1117,30 @@ function user_menu() {
+   return $items;
+ }
+ 
++/**
++ * Implementation of hook_init().
++ */
+ function user_init() {
+   drupal_add_css(drupal_get_path('module', 'user') .'/user.css', 'module');
+ }
+ 
+-function user_uid_optional_load($arg) {
+-  return user_load(isset($arg) ? $arg : $GLOBALS['user']->uid);
++/**
++ * Load either a specified or the current user account.
++ *
++ * @param $uid
++ *   An optional user ID of the user to load. If not provided, the current
++ *   user's ID will be used.
++ * @return
++ *   A fully-loaded $user object upon successful user load, FALSE if user
++ *   cannot be loaded.
++ *
++ * @see user_load()
++ */
++function user_uid_optional_load($uid = NULL) {
++  if (!isset($uid)) {
++    $uid = $GLOBALS['user']->uid;
++  }
++  return user_load($uid);
+ }
+ 
+ /**

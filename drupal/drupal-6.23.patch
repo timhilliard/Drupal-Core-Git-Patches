@@ -1,0 +1,82 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 8f6f713..cc72f06 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,8 @@
+ 
++Drupal 6.23, 2012-02-01
++----------------------
++- Fixed security issues (Cross site scripting), see SA-CORE-2012-001.
++
+ Drupal 6.22, 2011-05-25
+ ----------------------
+ - Made Drupal 6 work better with IIS and Internet Explorer.
+diff --git a/modules/aggregator/aggregator.admin.inc b/modules/aggregator/aggregator.admin.inc
+index 221d0ab..ca879f9 100644
+--- a/modules/aggregator/aggregator.admin.inc
++++ b/modules/aggregator/aggregator.admin.inc
+@@ -26,7 +26,15 @@ function aggregator_view() {
+   $header = array(t('Title'), t('Items'), t('Last update'), t('Next update'), array('data' => t('Operations'), 'colspan' => '3'));
+   $rows = array();
+   while ($feed = db_fetch_object($result)) {
+-    $rows[] = array(l($feed->title, "aggregator/sources/$feed->fid"), format_plural($feed->items, '1 item', '@count items'), ($feed->checked ? t('@time ago', array('@time' => format_interval(time() - $feed->checked))) : t('never')), ($feed->checked ? t('%time left', array('%time' => format_interval($feed->checked + $feed->refresh - time()))) : t('never')), l(t('edit'), "admin/content/aggregator/edit/feed/$feed->fid"), l(t('remove items'), "admin/content/aggregator/remove/$feed->fid"), l(t('update items'), "admin/content/aggregator/update/$feed->fid"));
++    $rows[] = array(
++      l($feed->title, "aggregator/sources/$feed->fid"),
++      format_plural($feed->items, '1 item', '@count items'),
++      ($feed->checked ? t('@time ago', array('@time' => format_interval(time() - $feed->checked))) : t('never')),
++      ($feed->checked ? t('%time left', array('%time' => format_interval($feed->checked + $feed->refresh - time()))) : t('never')),
++      l(t('edit'), "admin/content/aggregator/edit/feed/$feed->fid"),
++      l(t('remove items'), "admin/content/aggregator/remove/$feed->fid"),
++      l(t('update items'), "admin/content/aggregator/update/$feed->fid", array('query' => array('token' => drupal_get_token("aggregator/update/$feed->fid")))),
++    );
+   }
+   $output .= theme('table', $header, $rows);
+ 
+@@ -209,6 +217,9 @@ function aggregator_admin_remove_feed_submit($form, &$form_state) {
+  *   An associative array describing the feed to be refreshed.
+  */
+ function aggregator_admin_refresh_feed($feed) {
++  if (!isset($_GET['token']) || !drupal_valid_token($_GET['token'], 'aggregator/update/' . $feed['fid'])) {
++    return drupal_access_denied();
++  }
+   aggregator_refresh($feed);
+   drupal_goto('admin/content/aggregator');
+ }
+diff --git a/modules/openid/openid.module b/modules/openid/openid.module
+index f1885df..71e0f5b 100644
+--- a/modules/openid/openid.module
++++ b/modules/openid/openid.module
+@@ -425,14 +425,17 @@ function openid_authentication($response) {
+   elseif (variable_get('user_register', 1)) {
+     // Register new user
+     $form_state['redirect'] = NULL;
+-    $form_state['values']['name'] = (empty($response['openid.sreg.nickname'])) ? '' : $response['openid.sreg.nickname'];
+-    $form_state['values']['mail'] = (empty($response['openid.sreg.email'])) ? '' : $response['openid.sreg.email'];
++    // Only signed SREG keys are included as required by OpenID Simple
++    // Registration Extension 1.0, section 4.
++    $signed_keys = explode(',', $response['openid.signed']);
++    $form_state['values']['name'] = in_array('sreg.nickname', $signed_keys) ? $response['openid.sreg.nickname'] : '';
++    $form_state['values']['mail'] = in_array('sreg.email', $signed_keys) ? $response['openid.sreg.email'] : '';
+     $form_state['values']['pass']  = user_password();
+     $form_state['values']['status'] = variable_get('user_register', 1) == 1;
+     $form_state['values']['response'] = $response;
+     $form_state['values']['auth_openid'] = $identity;
+ 
+-    if (empty($response['openid.sreg.email']) && empty($response['openid.sreg.nickname'])) {
++    if (empty($form_state['values']['name']) && empty($form_state['values']['mail'])) {
+       drupal_set_message(t('Please complete the registration by filling out the form below. If you already have an account, you can <a href="@login">log in</a> now and add your OpenID under "My account".', array('@login' => url('user/login'))), 'warning');
+       $success = FALSE;
+     }
+diff --git a/modules/system/system.module b/modules/system/system.module
+index bc540a7..db9af51 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -8,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.22');
++define('VERSION', '6.23');
+ 
+ /**
+  * Core API compatibility.

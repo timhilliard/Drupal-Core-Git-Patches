@@ -1,0 +1,660 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index ada825d..b31bc66 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,5 +1,13 @@
+ // $Id$
+ 
++Drupal 6.10, 2009-02-25
++----------------------
++- Fixed a security issue, (Local file inclusion on Windows),
++  see SA-CORE-2009-003
++- Fixed node_feed() so custom fields can show up in RSS feeds.
++- Improved PostgreSQL compatibility.
++- Fixed a variety of small bugs.
++
+ Drupal 6.9, 2009-01-14
+ ----------------------
+ - Fixed security issues, (Access Bypass, Validation Bypass and Hardening
+@@ -11,9 +19,6 @@ Drupal 6.9, 2009-01-14
+   changed for contributed modules, see http://drupal.org/node/322731.
+ - Fixed a variety of small bugs.
+ 
+-Drupal 6.9-dev, xxxx-xx-xx (development release)
+-----------------------
+-
+ Drupal 6.8, 2008-12-11
+ ----------------------
+ - Removed a previous change incompatible with PHP 5.1.x and lower.
+diff --git a/includes/actions.inc b/includes/actions.inc
+index 6dd4463..333b2a6 100644
+--- a/includes/actions.inc
++++ b/includes/actions.inc
+@@ -40,6 +40,7 @@
+  *   performs the action, keyed on action ID.
+  */
+ function actions_do($action_ids, &$object, $context = NULL, $a1 = NULL, $a2 = NULL) {
++  // $stack tracks the number of recursive calls.
+   static $stack;
+   $stack++;
+   if ($stack > variable_get('actions_max_stack', 35)) {
+@@ -103,6 +104,7 @@ function actions_do($action_ids, &$object, $context = NULL, $a1 = NULL, $a2 = NU
+       $result[$action_ids] = $action_ids($object, $context, $a1, $a2);
+     }
+   }
++  $stack--;
+   return $result;
+ }
+ 
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index b74098d..49aa63e 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -132,6 +132,16 @@ define('LANGUAGE_NEGOTIATION_PATH', 2);
+ define('LANGUAGE_NEGOTIATION_DOMAIN', 3);
+ 
+ /**
++ * Language written left to right. Possible value of $language->direction.
++ */
++define('LANGUAGE_LTR', 0);
++
++/**
++ * Language written right to left. Possible value of $language->direction.
++ */
++define('LANGUAGE_RTL', 1);
++
++/**
+  * Start the timer with the specified name. If you start and stop
+  * the same timer multiple times, the measured intervals will be
+  * accumulated.
+@@ -551,7 +561,7 @@ function page_get_cache($status_only = FALSE) {
+   }
+   $cache = NULL;
+ 
+-  if (!$user->uid && $_SERVER['REQUEST_METHOD'] == 'GET' && count(drupal_set_message()) == 0) {
++  if (!$user->uid && $_SERVER['REQUEST_METHOD'] == 'GET' && count(drupal_set_message()) == 0 && $_SERVER['SERVER_SOFTWARE'] !== 'PHP CLI') {
+     $cache = cache_get($base_root . request_uri(), 'cache_page');
+ 
+     if (empty($cache)) {
+diff --git a/includes/common.inc b/includes/common.inc
+index 016fcfe..22ac3b2 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -1411,7 +1411,6 @@ function url($path = NULL, $options = array()) {
+ 
+   global $base_url;
+   static $script;
+-  static $clean_url;
+ 
+   if (!isset($script)) {
+     // On some web servers, such as IIS, we can't omit "index.php". So, we
+@@ -1420,11 +1419,6 @@ function url($path = NULL, $options = array()) {
+     $script = (strpos($_SERVER['SERVER_SOFTWARE'], 'Apache') === FALSE) ? 'index.php' : '';
+   }
+ 
+-  // Cache the clean_url variable to improve performance.
+-  if (!isset($clean_url)) {
+-    $clean_url = (bool)variable_get('clean_url', '0');
+-  }
+-
+   if (!isset($options['base_url'])) {
+     // The base_url might be rewritten from the language rewrite in domain mode.
+     $options['base_url'] = $base_url;
+@@ -1450,7 +1444,7 @@ function url($path = NULL, $options = array()) {
+   $prefix = empty($path) ? rtrim($options['prefix'], '/') : $options['prefix'];
+   $path = drupal_urlencode($prefix . $path);
+ 
+-  if ($clean_url) {
++  if (variable_get('clean_url', '0')) {
+     // With Clean URLs.
+     if ($options['query']) {
+       return $base . $path .'?'. $options['query'] . $options['fragment'];
+@@ -1539,6 +1533,8 @@ function drupal_attributes($attributes = array()) {
+  *   an HTML string containing a link to the given path.
+  */
+ function l($text, $path, $options = array()) {
++  global $language;
++
+   // Merge in defaults.
+   $options += array(
+       'attributes' => array(),
+@@ -1546,7 +1542,8 @@ function l($text, $path, $options = array()) {
+     );
+ 
+   // Append active class.
+-  if ($path == $_GET['q'] || ($path == '<front>' && drupal_is_front_page())) {
++  if (($path == $_GET['q'] || ($path == '<front>' && drupal_is_front_page())) &&
++      (empty($options['language']) || $options['language']->language == $language->language)) {
+     if (isset($options['attributes']['class'])) {
+       $options['attributes']['class'] .= ' active';
+     }
+@@ -1757,7 +1754,7 @@ function drupal_add_css($path = NULL, $type = 'module', $media = 'all', $preproc
+     $css[$media][$type][$path] = $preprocess;
+ 
+     // If the current language is RTL, add the CSS file with RTL overrides.
+-    if (defined('LANGUAGE_RTL') && $language->direction == LANGUAGE_RTL) {
++    if ($language->direction == LANGUAGE_RTL) {
+       $rtl_path = str_replace('.css', '-rtl.css', $path);
+       if (file_exists($rtl_path)) {
+         $css[$media][$type][$rtl_path] = $preprocess;
+diff --git a/includes/database.inc b/includes/database.inc
+index e9de0bc..3438da4 100644
+--- a/includes/database.inc
++++ b/includes/database.inc
+@@ -458,7 +458,7 @@ function db_escape_table($string) {
+  *
+  *  - 'primary key': An array of one or more key column specifiers (see below)
+  *    that form the primary key.
+- *  - 'unique key': An associative array of unique keys ('keyname' =>
++ *  - 'unique keys': An associative array of unique keys ('keyname' =>
+  *    specification).  Each specification is an array of one or more
+  *    key column specifiers (see below) that form a unique key on the table.
+  *  - 'indexes':  An associative array of indexes ('indexame' =>
+diff --git a/includes/form.inc b/includes/form.inc
+index 329ed2a..747cdb0 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -1169,7 +1169,12 @@ function form_type_image_button_value($form, $edit = FALSE) {
+  */
+ function form_type_checkbox_value($form, $edit = FALSE) {
+   if ($edit !== FALSE) {
+-    return !empty($edit) ? $form['#return_value'] : 0;
++    if (empty($form['#disabled'])) {
++      return !empty($edit) ? $form['#return_value'] : 0;
++    }
++    else {
++      return $form['#default_value'];
++    }
+   }
+ }
+ 
+@@ -1533,7 +1538,7 @@ function theme_radio($element) {
+   $output .= (check_plain($element['#value']) == $element['#return_value']) ? ' checked="checked" ' : ' ';
+   $output .= drupal_attributes($element['#attributes']) .' />';
+   if (!is_null($element['#title'])) {
+-    $output = '<label class="option">'. $output .' '. $element['#title'] .'</label>';
++    $output = '<label class="option" for="'. $element['#id'] .'">'. $output .' '. $element['#title'] .'</label>';
+   }
+ 
+   unset($element['#title']);
+@@ -1872,7 +1877,7 @@ function theme_checkbox($element) {
+   $checkbox .= drupal_attributes($element['#attributes']) .' />';
+ 
+   if (!is_null($element['#title'])) {
+-    $checkbox = '<label class="option">'. $checkbox .' '. $element['#title'] .'</label>';
++    $checkbox = '<label class="option" for="'. $element['#id'] .'">'. $checkbox .' '. $element['#title'] .'</label>';
+   }
+ 
+   unset($element['#title']);
+diff --git a/includes/install.inc b/includes/install.inc
+index 5a0ecd2..53d225d 100644
+--- a/includes/install.inc
++++ b/includes/install.inc
+@@ -281,7 +281,7 @@ function drupal_verify_profile($profile, $locale) {
+ 
+   // Get a list of modules required by this profile.
+   $function = $profile .'_profile_modules';
+-  $module_list = array_merge(drupal_required_modules(), $function(), ($locale != 'en' ? array('locale') : array()));
++  $module_list = array_merge(drupal_required_modules(), $function(), ($locale != 'en' && !empty($locale) ? array('locale') : array()));
+ 
+   // Get a list of modules that exist in Drupal's assorted subdirectories.
+   $present_modules = array();
+diff --git a/includes/menu.inc b/includes/menu.inc
+index 46cad96..d69fb8a 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -552,15 +552,18 @@ function _menu_item_localize(&$item, $map, $link_translate = FALSE) {
+  *   a non existing node) then this function return FALSE.
+  */
+ function _menu_translate(&$router_item, $map, $to_arg = FALSE) {
++  if ($to_arg) {
++    // Fill in missing path elements, such as the current uid.
++    _menu_link_map_translate($map, $router_item['to_arg_functions']);
++  }
++  // The $path_map saves the pieces of the path as strings, while elements in
++  // $map may be replaced with loaded objects.
+   $path_map = $map;
+   if (!_menu_load_objects($router_item, $map)) {
+     // An error occurred loading an object.
+     $router_item['access'] = FALSE;
+     return FALSE;
+   }
+-  if ($to_arg) {
+-    _menu_link_map_translate($path_map, $router_item['to_arg_functions']);
+-  }
+ 
+   // Generate the link path for the page request or local tasks.
+   $link_map = explode('/', $router_item['path']);
+diff --git a/includes/module.inc b/includes/module.inc
+index 034f54e..fbd9564 100644
+--- a/includes/module.inc
++++ b/includes/module.inc
+@@ -48,8 +48,8 @@ function module_list($refresh = FALSE, $bootstrap = TRUE, $sort = FALSE, $fixed_
+   static $list, $sorted_list;
+ 
+   if ($refresh || $fixed_list) {
+-    unset($sorted_list);
+     $list = array();
++    $sorted_list = NULL;
+     if ($fixed_list) {
+       foreach ($fixed_list as $name => $module) {
+         drupal_get_filename('module', $name, $module['filename']);
+diff --git a/includes/theme.inc b/includes/theme.inc
+index c8857f6..dac0371 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -1133,6 +1133,7 @@ function theme_status_messages($display = NULL) {
+  *   A string containing an unordered list of links.
+  */
+ function theme_links($links, $attributes = array('class' => 'links')) {
++  global $language;
+   $output = '';
+ 
+   if (count($links) > 0) {
+@@ -1151,7 +1152,8 @@ function theme_links($links, $attributes = array('class' => 'links')) {
+       if ($i == $num_links) {
+         $class .= ' last';
+       }
+-      if (isset($link['href']) && ($link['href'] == $_GET['q'] || ($link['href'] == '<front>' && drupal_is_front_page()))) {
++      if (isset($link['href']) && ($link['href'] == $_GET['q'] || ($link['href'] == '<front>' && drupal_is_front_page()))
++          && (empty($link['language']) || $link['language']->language == $language->language)) {
+         $class .= ' active';
+       }
+       $output .= '<li'. drupal_attributes(array('class' => $class)) .'>';
+@@ -1866,6 +1868,7 @@ function template_preprocess_page(&$variables) {
+   $suggestion = 'page';
+   $suggestions = array();
+   while ($arg = arg($i++)) {
++    $arg = str_replace(array('/', '\\', '\0'), '', $arg);
+     $suggestions[] = $suggestion .'-'. $arg;
+     if (!is_numeric($arg)) {
+       $suggestion .= '-'. $arg;
+diff --git a/install.php b/install.php
+index bfdc3b8..fda7d4e 100644
+--- a/install.php
++++ b/install.php
+@@ -556,9 +556,11 @@ function install_select_locale($profilename) {
+       }
+     }
+ 
+-    foreach ($locales as $locale) {
+-      if ($_POST['locale'] == $locale->name) {
+-        return $locale->name;
++    if (!empty($_POST['locale'])) {
++      foreach ($locales as $locale) {
++        if ($_POST['locale'] == $locale->name) {
++          return $locale->name;
++        }
+       }
+     }
+ 
+diff --git a/modules/blog/blog.module b/modules/blog/blog.module
+index 2b38cb1..7f18033 100644
+--- a/modules/blog/blog.module
++++ b/modules/blog/blog.module
+@@ -49,7 +49,8 @@ function blog_user($type, &$edit, &$user) {
+     $user->content['summary']['blog'] =  array(
+       '#type' => 'user_profile_item',
+       '#title' => t('Blog'),
+-      '#value' => l(t('View recent blog entries'), "blog/$user->uid", array('attributes' => array('title' => t("Read @username's latest blog entries.", array('@username' => $user->name))))),
++      // l() escapes the attributes, so we should not escape !username here.
++      '#value' => l(t('View recent blog entries'), "blog/$user->uid", array('attributes' => array('title' => t("Read !username's latest blog entries.", array('!username' => $user->name))))),
+       '#attributes' => array('class' => 'blog'),
+     );
+   }
+@@ -104,8 +105,8 @@ function blog_form(&$node) {
+  */
+ function blog_view($node, $teaser = FALSE, $page = FALSE) {
+   if ($page) {
+-    // Breadcrumb navigation
+-    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Blogs'), 'blog'), l(t("@name's blog", array('@name' => $node->name)), 'blog/'. $node->uid)));
++    // Breadcrumb navigation. l() escapes the title, so we should not escape !name. 
++    drupal_set_breadcrumb(array(l(t('Home'), NULL), l(t('Blogs'), 'blog'), l(t("!name's blog", array('!name' => $node->name)), 'blog/'. $node->uid)));
+   }
+   return node_prepare($node, $teaser);
+ }
+@@ -118,10 +119,11 @@ function blog_link($type, $node = NULL, $teaser = FALSE) {
+ 
+   if ($type == 'node' && $node->type == 'blog') {
+     if (arg(0) != 'blog' || arg(1) != $node->uid) {
++      // This goes to l() and therefore escapes !username in both the title and attributes.
+       $links['blog_usernames_blog'] = array(
+-        'title' => t("@username's blog", array('@username' => $node->name)),
++        'title' => t("!username's blog", array('!username' => $node->name)),
+         'href' => "blog/$node->uid",
+-        'attributes' => array('title' => t("Read @username's latest blog entries.", array('@username' => $node->name)))
++        'attributes' => array('title' => t("Read !username's latest blog entries.", array('!username' => $node->name)))
+       );
+     }
+   }
+diff --git a/modules/book/book.module b/modules/book/book.module
+index ebdc7f0..41156a2 100644
+--- a/modules/book/book.module
++++ b/modules/book/book.module
+@@ -885,7 +885,7 @@ function template_preprocess_book_export_html(&$variables) {
+   $variables['title'] = check_plain($variables['title']);
+   $variables['base_url'] = $base_url;
+   $variables['language'] = $language;
+-  $variables['language_rtl'] = (defined('LANGUAGE_RTL') && $language->direction == LANGUAGE_RTL) ? TRUE : FALSE;
++  $variables['language_rtl'] = ($language->direction == LANGUAGE_RTL);
+   $variables['head'] = drupal_get_html_head();
+ }
+ 
+diff --git a/modules/color/color.module b/modules/color/color.module
+index 5fa2070..2ee7b4d 100644
+--- a/modules/color/color.module
++++ b/modules/color/color.module
+@@ -93,7 +93,7 @@ function _color_page_alter(&$vars) {
+ 
+           // If the current language is RTL and the CSS file had an RTL variant,
+           // pull out the non-colored and add rewritten RTL stylesheet.
+-          if (defined('LANGUAGE_RTL') && $language->direction == LANGUAGE_RTL) {
++          if ($language->direction == LANGUAGE_RTL) {
+             $rtl_old_path = str_replace('.css', '-rtl.css', $old_path);
+             $rtl_color_path = str_replace('.css', '-rtl.css', $color_path);
+             if (file_exists($rtl_color_path)) {
+diff --git a/modules/locale/locale.module b/modules/locale/locale.module
+index 45c3abe..937e5fa 100644
+--- a/modules/locale/locale.module
++++ b/modules/locale/locale.module
+@@ -12,17 +12,6 @@
+  *   Gettext portable object files are supported.
+  */
+ 
+-/**
+- * Language written left to right. Possible value of $language->direction.
+- */
+-define('LANGUAGE_LTR', 0);
+-
+-/**
+- * Language written right to left. Possible value of $language->direction.
+- */
+-define('LANGUAGE_RTL', 1);
+-
+-
+ // ---------------------------------------------------------------------------------
+ // Hook implementations
+ 
+diff --git a/modules/menu/menu.admin.inc b/modules/menu/menu.admin.inc
+index d55d751..e566889 100644
+--- a/modules/menu/menu.admin.inc
++++ b/modules/menu/menu.admin.inc
+@@ -366,7 +366,7 @@ function menu_item_delete_submit($form, &$form_state) {
+  * Process menu and menu item add/edit form submissions.
+  */
+ function menu_edit_item_submit($form, &$form_state) {
+-  $item = $form_state['values']['menu'];
++  $item = &$form_state['values']['menu'];
+ 
+   // The value of "hidden" is the opposite of the value
+   // supplied by the "enabled" checkbox.
+diff --git a/modules/menu/menu.module b/modules/menu/menu.module
+index e9d1e2a..85f0fbe 100644
+--- a/modules/menu/menu.module
++++ b/modules/menu/menu.module
+@@ -163,11 +163,13 @@ function menu_theme() {
+  */
+ function menu_enable() {
+   menu_rebuild();
+-  $link = db_fetch_array(db_query("SELECT mlid AS plid, menu_name from {menu_links} WHERE link_path = 'admin/build/menu' AND module = 'system'"));
+-  $link['router_path'] = 'admin/build/menu-customize/%';
+-  $link['module'] = 'menu';
++  $base_link = db_fetch_array(db_query("SELECT mlid AS plid, menu_name from {menu_links} WHERE link_path = 'admin/build/menu' AND module = 'system'"));
++  $base_link['router_path'] = 'admin/build/menu-customize/%';
++  $base_link['module'] = 'menu';
+   $result = db_query("SELECT * FROM {menu_custom}");
+   while ($menu = db_fetch_array($result)) {
++    // $link is passed by reference to menu_link_save(), so we make a copy of $base_link.
++    $link = $base_link;
+     $link['mlid'] = 0;
+     $link['link_title'] = $menu['title'];
+     $link['link_path'] = 'admin/build/menu-customize/'. $menu['menu_name'];
+@@ -296,7 +298,7 @@ function menu_nodeapi(&$node, $op) {
+     case 'insert':
+     case 'update':
+       if (isset($node->menu)) {
+-        $item = $node->menu;
++        $item = &$node->menu;
+         if (!empty($item['delete'])) {
+           menu_link_delete($item['mlid']);
+         }
+diff --git a/modules/node/node.module b/modules/node/node.module
+index 40ccaa5..dc9da91 100644
+--- a/modules/node/node.module
++++ b/modules/node/node.module
+@@ -832,6 +832,7 @@ function node_submit($node) {
+     }
+     else {
+       $node->teaser = '';
++      $node->format = 0;
+     }
+   }
+ 
+@@ -1675,8 +1676,23 @@ function node_feed($nids = FALSE, $channel = array()) {
+         $item = node_prepare($item, $teaser);
+       }
+ 
+-      // Allow modules to change $node->teaser before viewing.
++      // Allow modules to change $node->content before the node is rendered.
+       node_invoke_nodeapi($item, 'view', $teaser, FALSE);
++
++      // Set the proper node property, then unset unused $node property so that a
++      // bad theme can not open a security hole.
++      $content = drupal_render($item->content);
++      if ($teaser) {
++        $item->teaser = $content;
++        unset($item->body);
++      }
++      else {
++        $item->body = $content;
++        unset($item->teaser);
++      }
++    
++      // Allow modules to modify the fully-built node.
++      node_invoke_nodeapi($item, 'alter', $teaser, FALSE);
+     }
+ 
+     // Allow modules to add additional item fields and/or modify $item
+diff --git a/modules/search/search.module b/modules/search/search.module
+index 4b81c35..47721ae 100644
+--- a/modules/search/search.module
++++ b/modules/search/search.module
+@@ -637,7 +637,9 @@ function search_nodeapi(&$node, $op, $teaser = NULL, $page = NULL) {
+       while ($link = db_fetch_object($result)) {
+         $output[] = $link->caption;
+       }
+-      return '<a>('. implode(', ', $output) .')</a>';
++      if (count($output)) {
++        return '<a>('. implode(', ', $output) .')</a>';
++      }
+     // Reindex the node when it is updated.  The node is automatically indexed
+     // when it is added, simply by being added to the node table.
+     case 'update':
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index aa2678e..dd6ddf8 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -1726,7 +1726,7 @@ function system_run_cron() {
+  * Menu callback: return information about PHP.
+  */
+ function system_php() {
+-  phpinfo(INFO_GENERAL | INFO_CONFIGURATION);
++  phpinfo();
+   exit();
+ }
+ 
+diff --git a/modules/system/system.install b/modules/system/system.install
+index 1775b06..e20442a 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -64,10 +64,10 @@ function system_requirements($phase) {
+   $memory_limit = ini_get('memory_limit');
+   $requirements['php_memory_limit'] = array(
+     'title' => $t('PHP memory limit'),
+-    'value' => $memory_limit,
++    'value' => $memory_limit == -1 ? t('-1 (Unlimited)') : $memory_limit,
+   );
+ 
+-  if ($memory_limit && parse_size($memory_limit) < parse_size(DRUPAL_MINIMUM_PHP_MEMORY_LIMIT)) {
++  if ($memory_limit && $memory_limit != -1 && parse_size($memory_limit) < parse_size(DRUPAL_MINIMUM_PHP_MEMORY_LIMIT)) {
+     $description = '';
+     if ($phase == 'install') {
+       $description = $t('Consider increasing your PHP memory limit to %memory_minimum_limit to help prevent errors in the installation process.', array('%memory_minimum_limit' => DRUPAL_MINIMUM_PHP_MEMORY_LIMIT));
+@@ -1095,7 +1095,7 @@ function system_schema() {
+       ),
+     'unique keys' => array('dst_language' => array('dst', 'language')),
+     'primary key' => array('pid'),
+-    'indexes' => array('src' => array('src')),
++    'indexes' => array('src_language' => array('src', 'language')),
+     );
+ 
+   return $schema;
+@@ -1161,7 +1161,7 @@ function system_update_6001() {
+   db_add_primary_key($ret, 'term_node', array('vid', 'tid', 'nid'));
+   db_add_index($ret, 'term_node', 'vid', array('vid'));
+ 
+-  db_query('UPDATE {term_node} t SET vid = (SELECT vid FROM {node} n WHERE t.nid = n.nid)');
++  db_query('UPDATE {term_node} SET vid = (SELECT vid FROM {node} n WHERE {term_node}.nid = n.nid)');
+   return $ret;
+ }
+ 
+@@ -1802,6 +1802,10 @@ function system_update_6021() {
+         $item['router_path'] = $item['path'];
+         $item['updated'] = FALSE;
+       }
++      if ($item['description']) {
++        $item['options']['attributes']['title'] = $item['description'];
++      }      
++      
+       // Save the link.
+       menu_link_save($item);
+       $_SESSION['menu_item_map'][$item['mid']] = array('mlid' => $item['mlid'], 'menu_name' => $item['menu_name']);
+@@ -2534,6 +2538,16 @@ function system_update_6048() {
+ 
+ 
+ /**
++ * Replace src index on the {url_alias} table with src, language.
++ */
++function system_update_6049() {
++  $ret = array();
++  db_drop_index($ret, 'url_alias', 'src');
++  db_add_index($ret, 'url_alias', 'src_language', array('src', 'language'));
++  return $ret;
++}
++
++/**
+  * @} End of "defgroup updates-5.x-to-6.x"
+  * The next series of updates should start at 7000.
+  */
+diff --git a/modules/system/system.module b/modules/system/system.module
+index 200fc6e..37ee7f9 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.9');
++define('VERSION', '6.10');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/taxonomy/taxonomy.admin.inc b/modules/taxonomy/taxonomy.admin.inc
+index 800960f..f73b0f2 100644
+--- a/modules/taxonomy/taxonomy.admin.inc
++++ b/modules/taxonomy/taxonomy.admin.inc
+@@ -279,7 +279,7 @@ function taxonomy_overview_terms(&$form_state, $vocabulary) {
+     // We are not calling taxonomy_get_tree because that might fail with a big
+     // number of tags in the freetagging vocabulary.
+     $results = pager_query(db_rewrite_sql('SELECT t.*, h.parent FROM {term_data} t INNER JOIN {term_hierarchy} h ON t.tid = h.tid WHERE t.vid = %d ORDER BY weight, name', 't', 'tid'), $page_increment, 0, NULL, $vocabulary->vid);
+-    $total_entries = db_query(db_rewrite_sql('SELECT count(*) FROM {term_data} t INNER JOIN {term_hierarchy} h ON t.tid = h.tid WHERE t.vid = %d'), $page_increment, 0, NULL, $vocabulary->vid);
++    $total_entries = db_query(db_rewrite_sql('SELECT count(*) FROM {term_data} t INNER JOIN {term_hierarchy} h ON t.tid = h.tid WHERE t.vid = %d', 't', 'tid'), $page_increment, 0, NULL, $vocabulary->vid);
+     while ($term = db_fetch_object($results)) {
+       $key = 'tid:'. $term->tid .':0';
+       $current_page[$key] = $term;
+diff --git a/modules/taxonomy/taxonomy.module b/modules/taxonomy/taxonomy.module
+index fe0d774..e79c981 100644
+--- a/modules/taxonomy/taxonomy.module
++++ b/modules/taxonomy/taxonomy.module
+@@ -527,7 +527,7 @@ function taxonomy_form_alter(&$form, $form_state, $form_id) {
+           '#default_value' => $typed_string,
+           '#autocomplete_path' => 'taxonomy/autocomplete/'. $vocabulary->vid,
+           '#weight' => $vocabulary->weight,
+-          '#maxlength' => 255,
++          '#maxlength' => 1024,
+         );
+       }
+       else {
+diff --git a/modules/user/user.module b/modules/user/user.module
+index 3ca3e5b..3cc7dab 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -626,15 +626,15 @@ function user_user($type, &$edit, &$account, $category = NULL) {
+   }
+   if ($type == 'form' && $category == 'account') {
+     $form_state = array();
+-    return user_edit_form($form_state, arg(1), $edit);
++    return user_edit_form($form_state, (isset($account->uid) ? $account->uid : FALSE), $edit);
+   }
+ 
+   if ($type == 'validate' && $category == 'account') {
+-    return _user_edit_validate(arg(1), $edit);
++    return _user_edit_validate((isset($account->uid) ? $account->uid : FALSE), $edit);
+   }
+ 
+   if ($type == 'submit' && $category == 'account') {
+-    return _user_edit_submit(arg(1), $edit);
++    return _user_edit_submit((isset($account->uid) ? $account->uid : FALSE), $edit);
+   }
+ 
+   if ($type == 'categories') {
+@@ -1441,7 +1441,8 @@ function user_edit_form(&$form_state, $uid, $edit, $register = FALSE) {
+     '#title' => t('Account information'),
+     '#weight' => -10,
+   );
+-  if (user_access('change own username') || $admin || $register) {
++  // Only show name field when: registration page; or user is editing own account and can change username; or an admin user.
++  if ($register || ($GLOBALS['user']->uid == $uid && user_access('change own username')) || $admin) {
+     $form['account']['name'] = array('#type' => 'textfield',
+       '#title' => t('Username'),
+       '#default_value' => $edit['name'],
+@@ -1543,9 +1544,8 @@ function user_edit_form(&$form_state, $uid, $edit, $register = FALSE) {
+ }
+ 
+ function _user_edit_validate($uid, &$edit) {
+-  $user = user_load(array('uid' => $uid));
+-  // Validate the username:
+-  if (user_access('change own username') || user_access('administer users') || !$user->uid) {
++  // Validate the username when: new user account; or user is editing own account and can change username; or an admin user.
++  if (!$uid || ($GLOBALS['user']->uid == $uid && user_access('change own username')) || user_access('administer users')) {
+     if ($error = user_validate_name($edit['name'])) {
+       form_set_error('name', $error);
+     }
+@@ -1570,11 +1570,11 @@ function _user_edit_validate($uid, &$edit) {
+ }
+ 
+ function _user_edit_submit($uid, &$edit) {
+-  $user = user_load(array('uid' => $uid));
++  $account = user_load($uid);
+   // Delete picture if requested, and if no replacement picture was given.
+   if (!empty($edit['picture_delete'])) {
+-    if ($user->picture && file_exists($user->picture)) {
+-      file_delete($user->picture);
++    if ($account->picture && file_exists($account->picture)) {
++      file_delete($account->picture);
+     }
+     $edit['picture'] = '';
+   }
+diff --git a/themes/garland/template.php b/themes/garland/template.php
+index 0d06bb4..9ba09a6 100644
+--- a/themes/garland/template.php
++++ b/themes/garland/template.php
+@@ -94,7 +94,7 @@ function phptemplate_get_ie_styles() {
+   global $language;
+ 
+   $iecss = '<link type="text/css" rel="stylesheet" media="all" href="'. base_path() . path_to_theme() .'/fix-ie.css" />';
+-  if (defined('LANGUAGE_RTL') && $language->direction == LANGUAGE_RTL) {
++  if ($language->direction == LANGUAGE_RTL) {
+     $iecss .= '<style type="text/css" media="all">@import "'. base_path() . path_to_theme() .'/fix-ie-rtl.css";</style>';
+   }
+ 

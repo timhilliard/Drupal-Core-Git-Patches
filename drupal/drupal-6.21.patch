@@ -1,0 +1,101 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index a7eb7a8..1f48dff 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,7 @@
+-// $Id$
++
++Drupal 6.21, 2011-05-25
++----------------------
++- Fixed security issues (Cross site scripting), see SA-CORE-2011-001.
+ 
+ Drupal 6.20, 2010-12-15
+ ----------------------
+diff --git a/includes/common.inc b/includes/common.inc
+index cf70d22..01f7ce7 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -653,7 +653,7 @@ function drupal_error_handler($errno, $message, $filename, $line, $context) {
+       }
+     }
+ 
+-    $entry = $types[$errno] .': '. $message .' in '. $filename .' on line '. $line .'.';
++    $entry = check_plain($types[$errno]) .': '. filter_xss($message) .' in '. check_plain($filename) .' on line '. check_plain($line) .'.';
+ 
+     // Force display of error messages in update.php.
+     if (variable_get('error_level', 1) == 1 || strstr($_SERVER['SCRIPT_NAME'], 'update.php')) {
+diff --git a/modules/color/color.install b/modules/color/color.install
+index 5526ec7..3fb58e7 100644
+--- a/modules/color/color.install
++++ b/modules/color/color.install
+@@ -33,3 +33,20 @@ function color_requirements($phase) {
+ 
+   return $requirements;
+ }
++
++/**
++ * Warn site administrator if unsafe CSS color codes are found in the database.
++ */
++function color_update_6001() {
++  $ret = array();
++  $result = db_query("SELECT name FROM {variable} WHERE name LIKE 'color_%_palette'");
++  while ($variable = db_fetch_array($result)) {
++    $palette = variable_get($variable['name'], array());
++    foreach ($palette as $key => $color) {
++      if (!preg_match('/^#([a-f0-9]{3}){1,2}$/iD', $color)) {
++        drupal_set_message('Some of the custom CSS color codes specified via the color module are invalid. Please examine the themes which are making use of the color module at the <a href="'. url('admin/appearance/settings') .'">Appearance settings</a> page to verify their CSS color values.', 'warning');
++      }
++    }
++  }
++  return $ret;
++}
+diff --git a/modules/color/color.module b/modules/color/color.module
+index 407a93c..44c2a31 100644
+--- a/modules/color/color.module
++++ b/modules/color/color.module
+@@ -46,6 +46,7 @@ function color_form_alter(&$form, $form_state, $form_id) {
+         '#theme' => 'color_scheme_form',
+       );
+       $form['color'] += color_scheme_form($form_state, arg(4));
++      $form['#validate'][] = 'color_scheme_form_validate';
+       $form['#submit'][] = 'color_scheme_form_submit';
+     }
+   }
+@@ -237,6 +238,18 @@ function theme_color_scheme_form($form) {
+ }
+ 
+ /**
++ * Validation handler for color change form.
++ */
++function color_scheme_form_validate($form, &$form_state) {
++  // Only accept hexadecimal CSS color strings to avoid XSS upon use.
++  foreach ($form_state['values']['palette'] as $key => $color) {
++    if (!preg_match('/^#([a-f0-9]{3}){1,2}$/iD', $color)) {
++      form_set_error('palette][' . $key, t('%name must be a valid hexadecimal CSS color value.', array('%name' => $form['color']['palette'][$key]['#title'])));
++    }
++  }
++}
++
++/**
+  * Submit handler for color change form.
+  */
+ function color_scheme_form_submit($form, &$form_state) {
+diff --git a/modules/system/system.module b/modules/system/system.module
+index e55666c..bc92ab9 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -9,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.20');
++define('VERSION', '6.21');
+ 
+ /**
+  * Core API compatibility.

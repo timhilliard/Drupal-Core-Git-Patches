@@ -1,0 +1,1316 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 4abd8f6..6e67080 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,5 +1,10 @@
+ // $Id$
+ 
++Drupal 6.2, 2008-04-09 
++----------------------
++- fixed a variety of small bugs
++- fixed a security issue (Access bypasses), see SA-2008-026
++
+ Drupal 6.1, 2008-02-27
+ ----------------------
+ - fixed a variety of small bugs.
+diff --git a/includes/mail.inc b/includes/mail.inc
+index 4234aac..2d4f23a 100644
+--- a/includes/mail.inc
++++ b/includes/mail.inc
+@@ -187,6 +187,8 @@ function drupal_mail_send($message) {
+       // Note: e-mail uses CRLF for line-endings, but PHP's API requires LF.
+       // They will appear correctly in the actual e-mail that is sent.
+       str_replace("\r", '', $message['body']),
++      // For headers, PHP's API suggests that we use CRLF normally,
++      // but some MTAs incorrecly replace LF with CRLF. See #234403.
+       join("\n", $mimeheaders)
+     );
+   }
+diff --git a/includes/menu.inc b/includes/menu.inc
+index 9be9c65..5d2268c 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -772,16 +772,22 @@ function menu_tree_all_data($menu_name = 'navigation', $item = NULL) {
+ 
+   // Use $mlid as a flag for whether the data being loaded is for the whole tree.
+   $mlid = isset($item['mlid']) ? $item['mlid'] : 0;
+-  // Generate the cache ID.
+-  $cid = 'links:'. $menu_name .':all:'. $mlid;
++  // Generate a cache ID (cid) specific for this $menu_name and $item.
++  $cid = 'links:'. $menu_name .':all-cid:'. $mlid;
+ 
+   if (!isset($tree[$cid])) {
+     // If the static variable doesn't have the data, check {cache_menu}.
+     $cache = cache_get($cid, 'cache_menu');
+     if ($cache && isset($cache->data)) {
+-      $data = $cache->data;
++      // If the cache entry exists, it will just be the cid for the actual data.
++      // This avoids duplication of large amounts of data.
++      $cache = cache_get($cache->data, 'cache_menu');
++      if ($cache && isset($cache->data)) {
++        $data = $cache->data;
++      }
+     }
+-    else {
++    // If the tree data was not in the cache, $data will be NULL.
++    if (!isset($data)) {
+       // Build and run the query, and build the tree.
+       if ($mlid) {
+         // The tree is for a single item, so we need to match the values in its
+@@ -813,8 +819,13 @@ function menu_tree_all_data($menu_name = 'navigation', $item = NULL) {
+         ORDER BY p1 ASC, p2 ASC, p3 ASC, p4 ASC, p5 ASC, p6 ASC, p7 ASC, p8 ASC, p9 ASC", $args), $parents);
+       $data['node_links'] = array();
+       menu_tree_collect_node_links($data['tree'], $data['node_links']);
+-      // Cache the data.
+-      cache_set($cid, $data, 'cache_menu');
++      // Cache the data, if it is not already in the cache.
++      $tree_cid = _menu_tree_cid($menu_name, $data);
++      if (!cache_get($tree_cid, 'cache_menu')) {
++        cache_set($tree_cid, $data, 'cache_menu');
++      }
++      // Cache the cid of the (shared) data using the menu and item-specific cid.
++      cache_set($cid, $tree_cid, 'cache_menu');
+     }
+     // Check access for the current user to each item in the tree.
+     menu_tree_check_access($data['tree'], $data['node_links']);
+@@ -844,16 +855,22 @@ function menu_tree_page_data($menu_name = 'navigation') {
+ 
+   // Load the menu item corresponding to the current page.
+   if ($item = menu_get_item()) {
+-    // Generate the cache ID.
+-    $cid = 'links:'. $menu_name .':page:'. $item['href'] .':'. (int)$item['access'];
++    // Generate a cache ID (cid) specific for this page.
++    $cid = 'links:'. $menu_name .':page-cid:'. $item['href'] .':'. (int)$item['access'];
+ 
+     if (!isset($tree[$cid])) {
+       // If the static variable doesn't have the data, check {cache_menu}.
+       $cache = cache_get($cid, 'cache_menu');
+       if ($cache && isset($cache->data)) {
+-        $data = $cache->data;
++        // If the cache entry exists, it will just be the cid for the actual data.
++        // This avoids duplication of large amounts of data.
++        $cache = cache_get($cache->data, 'cache_menu');
++        if ($cache && isset($cache->data)) {
++          $data = $cache->data;
++        }
+       }
+-      else {
++      // If the tree data was not in the cache, $data will be NULL.
++      if (!isset($data)) {
+         // Build and run the query, and build the tree.
+         if ($item['access']) {
+           // Check whether a menu link exists that corresponds to the current path.
+@@ -909,8 +926,13 @@ function menu_tree_page_data($menu_name = 'navigation') {
+           ORDER BY p1 ASC, p2 ASC, p3 ASC, p4 ASC, p5 ASC, p6 ASC, p7 ASC, p8 ASC, p9 ASC", $args), $parents);
+         $data['node_links'] = array();
+         menu_tree_collect_node_links($data['tree'], $data['node_links']);
+-        // Cache the data.
+-        cache_set($cid, $data, 'cache_menu');
++        // Cache the data, if it is not already in the cache.
++        $tree_cid = _menu_tree_cid($menu_name, $data);
++        if (!cache_get($tree_cid, 'cache_menu')) {
++          cache_set($tree_cid, $data, 'cache_menu');
++        }
++        // Cache the cid of the (shared) data using the page-specific cid.
++        cache_set($cid, $tree_cid, 'cache_menu');
+       }
+       // Check access for the current user to each item in the tree.
+       menu_tree_check_access($data['tree'], $data['node_links']);
+@@ -923,6 +945,13 @@ function menu_tree_page_data($menu_name = 'navigation') {
+ }
+ 
+ /**
++ * Helper function - compute the real cache ID for menu tree data.
++ */
++function _menu_tree_cid($menu_name, $data) {
++  return 'links:'. $menu_name .':tree-data:'. md5(serialize($data));
++}
++
++/**
+  * Recursive helper function - collect node links.
+  */
+ function menu_tree_collect_node_links(&$tree, &$node_links) {
+@@ -2246,9 +2275,10 @@ function _menu_router_build($callbacks) {
+         if (!isset($item['tab_root']) && !$parent['_tab']) {
+           $item['tab_root'] = $parent_path;
+         }
+-        // If a callback is not found, we try to find the first parent that
+-        // has a callback.
+-        if (!isset($item['access callback']) && isset($parent['access callback'])) {
++        // If an access callback is not found for a default local task we use
++        // the callback from the parent, since we expect them to be identical.
++        // In all other cases, the access parameters must be specified.
++        if (($item['type'] == MENU_DEFAULT_LOCAL_TASK) && !isset($item['access callback']) && isset($parent['access callback'])) {
+           $item['access callback'] = $parent['access callback'];
+           if (!isset($item['access arguments']) && isset($parent['access arguments'])) {
+             $item['access arguments'] = $parent['access arguments'];
+diff --git a/includes/theme.inc b/includes/theme.inc
+index 8104aae..8a0f73a 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -1103,7 +1103,7 @@ function theme_links($links, $attributes = array('class' => 'links')) {
+       if ($i == $num_links) {
+         $class .= ' last';
+       }
+-      if (isset($link['href']) && $link['href'] == $_GET['q']) {
++      if (isset($link['href']) && ($link['href'] == $_GET['q'] || ($link['href'] == '<front>' && drupal_is_front_page()))) {
+         $class .= ' active';
+       }
+       $output .= '<li class="'. $class .'">';
+@@ -1552,7 +1552,7 @@ function theme_username($object) {
+     }
+ 
+     if (user_access('access user profiles')) {
+-      $output = l($name, 'user/'. $object->uid, array('title' => t('View user profile.')));
++      $output = l($name, 'user/'. $object->uid, array('attributes' => array('title' => t('View user profile.'))));
+     }
+     else {
+       $output = check_plain($name);
+diff --git a/includes/xmlrpc.inc b/includes/xmlrpc.inc
+index 19ccd44..c7751e1 100644
+--- a/includes/xmlrpc.inc
++++ b/includes/xmlrpc.inc
+@@ -256,7 +256,7 @@ function xmlrpc_message_tag_close($parser, $tag) {
+     case 'value':
+       // If no type is indicated, the type is string
+       // We take special care for empty values
+-      if (trim($xmlrpc_message->current_tag_contents) != '' || $xmlrpc_message->last_open == 'value') {
++      if (trim($xmlrpc_message->current_tag_contents) != '' || (isset($xmlrpc_message->last_open) && ($xmlrpc_message->last_open == 'value'))) {
+         $value = (string)$xmlrpc_message->current_tag_contents;
+         $value_flag = TRUE;
+       }
+diff --git a/modules/aggregator/aggregator.module b/modules/aggregator/aggregator.module
+index 0475edb..f6c272c 100644
+--- a/modules/aggregator/aggregator.module
++++ b/modules/aggregator/aggregator.module
+@@ -201,6 +201,7 @@ function aggregator_menu() {
+   $items['aggregator/sources/%aggregator_feed'] = array(
+     'page callback' => 'aggregator_page_source',
+     'page arguments' => array(2),
++    'access arguments' => array('access news feeds'),
+     'type' => MENU_CALLBACK,
+     'file' => 'aggregator.pages.inc',
+   );
+diff --git a/modules/block/block.module b/modules/block/block.module
+index fe8e8b5..a123b4b 100644
+--- a/modules/block/block.module
++++ b/modules/block/block.module
+@@ -132,6 +132,7 @@ function block_menu() {
+   $items['admin/build/block/list/js'] = array(
+     'title' => 'JavaScript List Form',
+     'page callback' => 'block_admin_display_js',
++    'access arguments' => array('administer blocks'),
+     'type' => MENU_CALLBACK,
+     'file' => 'block.admin.inc',
+   );
+@@ -139,6 +140,7 @@ function block_menu() {
+     'title' => 'Configure block',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('block_admin_configure'),
++    'access arguments' => array('administer blocks'),
+     'type' => MENU_CALLBACK,
+     'file' => 'block.admin.inc',
+   );
+@@ -146,6 +148,7 @@ function block_menu() {
+     'title' => 'Delete block',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('block_box_delete'),
++    'access arguments' => array('administer blocks'),
+     'type' => MENU_CALLBACK,
+     'file' => 'block.admin.inc',
+   );
+@@ -153,6 +156,7 @@ function block_menu() {
+     'title' => 'Add block',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('block_add_block_form'),
++    'access arguments' => array('administer blocks'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'block.admin.inc',
+   );
+@@ -439,8 +443,23 @@ function block_list($region) {
+       else {
+         $page_match = TRUE;
+       }
++      $block->enabled = $enabled;
++      $block->page_match = $page_match;
++      $blocks[$block->region]["{$block->module}_{$block->delta}"] = $block;
++    }
++  }
+ 
+-      if ($enabled && $page_match) {
++  // Create an empty array if there were no entries
++  if (!isset($blocks[$region])) {
++    $blocks[$region] = array();
++  }
++
++  foreach ($blocks[$region] as $key => $block) {
++    // Render the block content if it has not been created already.
++    if (!isset($block->content)) {
++      // Erase the block from the static array - we'll put it back if it has content.
++      unset($blocks[$region][$key]);
++      if ($block->enabled && $block->page_match) {
+         // Check the current throttle status and see if block should be displayed
+         // based on server load.
+         if (!($block->throttle && (module_invoke('throttle', 'status') > 0))) {
+@@ -477,10 +496,6 @@ function block_list($region) {
+       }
+     }
+   }
+-  // Create an empty array if there were no entries
+-  if (!isset($blocks[$region])) {
+-    $blocks[$region] = array();
+-  }
+   return $blocks[$region];
+ }
+ 
+diff --git a/modules/blog/blog.module b/modules/blog/blog.module
+index 4efb8c2..789baa5 100644
+--- a/modules/blog/blog.module
++++ b/modules/blog/blog.module
+@@ -140,19 +140,20 @@ function blog_menu() {
+     'type' => MENU_SUGGESTED_ITEM,
+     'file' => 'blog.pages.inc',
+   );
+-  $items['blog/%user_current'] = array(
++  $items['blog/%user_uid_optional'] = array(
+     'title' => 'My blog',
+     'page callback' => 'blog_page_user',
+     'page arguments' => array(1),
+-    'access callback' => 'user_access',
+-    'access arguments' => array('create blog entries', 1),
++    'access callback' => 'blog_page_user_access',
++    'access arguments' => array(1),
+     'file' => 'blog.pages.inc',
+   );
+   $items['blog/%user/feed'] = array(
+     'title' => 'Blogs',
+     'page callback' => 'blog_feed_user',
+     'page arguments' => array(1),
+-    'access arguments' => array('access content'),
++    'access callback' => 'blog_page_user_access',
++    'access arguments' => array(1),
+     'type' => MENU_CALLBACK,
+     'file' => 'blog.pages.inc',
+   );
+@@ -168,6 +169,23 @@ function blog_menu() {
+ }
+ 
+ /**
++ * Access callback for user blog pages.
++ */
++function blog_page_user_access($account) {
++  // The visitor must be able to access the site's content.
++  // For a blog to 'exist' the user must either be able to
++  // create new blog entries, or it must have existing posts.
++  return $account->uid && user_access('access content') && (user_access('create blog entries', $account) || _blog_post_exists($account));
++}
++
++/**
++ * Helper function to determine if a user has blog posts already.
++ */
++function _blog_post_exists($account) {
++  return (bool)db_result(db_query_range(db_rewrite_sql("SELECT 1 FROM {node} n WHERE n.type = 'blog' AND n.uid = %d AND n.status = 1"), $account->uid, 0, 1));
++}
++
++/**
+  * Implementation of hook_block().
+  *
+  * Displays the most recent 10 blog titles.
+diff --git a/modules/book/book.module b/modules/book/book.module
+index f4dc789..6e8b68f 100644
+--- a/modules/book/book.module
++++ b/modules/book/book.module
+@@ -1044,14 +1044,21 @@ function book_link_load($mlid) {
+ function book_menu_subtree_data($item) {
+   static $tree = array();
+ 
+-  $cid = 'links:'. $item['menu_name'] .':subtree:'. $item['mlid'];
++  // Generate a cache ID (cid) specific for this $menu_name and $item.
++  $cid = 'links:'. $item['menu_name'] .':subtree-cid:'. $item['mlid'];
+ 
+   if (!isset($tree[$cid])) {
+     $cache = cache_get($cid, 'cache_menu');
+     if ($cache && isset($cache->data)) {
+-      $data = $cache->data;
++      // If the cache entry exists, it will just be the cid for the actual data.
++      // This avoids duplication of large amounts of data.
++      $cache = cache_get($cache->data, 'cache_menu');
++      if ($cache && isset($cache->data)) {
++        $data = $cache->data;
++      }
+     }
+-    else {
++    // If the subtree data was not in the cache, $data will be NULL.
++    if (!isset($data)) {
+       $match = array("menu_name = '%s'");
+       $args = array($item['menu_name']);
+       $i = 1;
+@@ -1070,8 +1077,14 @@ function book_menu_subtree_data($item) {
+       $data['tree'] = menu_tree_data(db_query($sql, $args), array(), $item['depth']);
+       $data['node_links'] = array();
+       menu_tree_collect_node_links($data['tree'], $data['node_links']);
+-      // Cache the data.
+-      cache_set($cid, $data, 'cache_menu');
++      // Compute the real cid for book subtree data.
++      $tree_cid = 'links:'. $menu_name .':subtree-data:'. md5(serialize($data));
++      // Cache the data, if it is not already in the cache.
++      if (!cache_get($tree_cid, 'cache_menu')) {
++        cache_set($tree_cid, $data, 'cache_menu');
++      }
++      // Cache the cid of the (shared) data using the menu and item-specific cid.
++      cache_set($cid, $tree_cid, 'cache_menu');
+     }
+     // Check access for the current user to each item in the tree.
+     menu_tree_check_access($data['tree'], $data['node_links']);
+diff --git a/modules/comment/comment.module b/modules/comment/comment.module
+index 0176232..594f9fb 100644
+--- a/modules/comment/comment.module
++++ b/modules/comment/comment.module
+@@ -211,6 +211,7 @@ function comment_menu() {
+   $items['admin/content/comment/approval'] = array(
+     'title' => 'Approval queue',
+     'page arguments' => array('approval'),
++    'access arguments' => array('administer comments'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'comment.admin.inc',
+   );
+diff --git a/modules/comment/comment.tpl.php b/modules/comment/comment.tpl.php
+index 68cc552..2207246 100644
+--- a/modules/comment/comment.tpl.php
++++ b/modules/comment/comment.tpl.php
+@@ -14,7 +14,7 @@
+  * - $picture: Authors picture.
+  * - $signature: Authors signature.
+  * - $status: Comment status. Possible values are:
+- *   comment-unpublished, comment-published or comment-review.
++ *   comment-unpublished, comment-published or comment-preview.
+  * - $submitted: By line with date and time.
+  * - $title: Linked title.
+  *
+diff --git a/modules/contact/contact.module b/modules/contact/contact.module
+index 5a51385..4557029 100644
+--- a/modules/contact/contact.module
++++ b/modules/contact/contact.module
+@@ -59,6 +59,7 @@ function contact_menu() {
+     'title' => 'Add category',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('contact_admin_edit', 3),
++    'access arguments' => array('administer site-wide contact form'),
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 1,
+     'file' => 'contact.admin.inc',
+@@ -67,6 +68,7 @@ function contact_menu() {
+     'title' => 'Edit contact category',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('contact_admin_edit', 3, 4),
++    'access arguments' => array('administer site-wide contact form'),
+     'type' => MENU_CALLBACK,
+     'file' => 'contact.admin.inc',
+   );
+@@ -74,6 +76,7 @@ function contact_menu() {
+     'title' => 'Delete contact',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('contact_admin_delete', 4),
++    'access arguments' => array('administer site-wide contact form'),
+     'type' => MENU_CALLBACK,
+     'file' => 'contact.admin.inc',
+   );
+@@ -81,6 +84,7 @@ function contact_menu() {
+     'title' => 'Settings',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('contact_admin_settings'),
++    'access arguments' => array('administer site-wide contact form'),
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 2,
+     'file' => 'contact.admin.inc',
+diff --git a/modules/dblog/dblog.module b/modules/dblog/dblog.module
+index 0dffb75..dfb28b2 100644
+--- a/modules/dblog/dblog.module
++++ b/modules/dblog/dblog.module
+@@ -47,6 +47,7 @@ function dblog_menu() {
+     'description' => 'Settings for logging to the Drupal database logs. This is the most common method for small to medium sites on shared hosting. The logs are viewable from the admin pages.',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('dblog_admin_settings'),
++    'access arguments' => array('administer site configuration'),
+     'file' => 'dblog.admin.inc',
+   );
+ 
+@@ -54,6 +55,7 @@ function dblog_menu() {
+     'title' => 'Recent log entries',
+     'description' => 'View events that have recently been logged.',
+     'page callback' => 'dblog_overview',
++    'access arguments' => array('access site reports'),
+     'weight' => -1,
+     'file' => 'dblog.admin.inc',
+   );
+@@ -62,6 +64,7 @@ function dblog_menu() {
+     'description' => "View 'page not found' errors (404s).",
+     'page callback' => 'dblog_top',
+     'page arguments' => array('page not found'),
++    'access arguments' => array('access site reports'),
+     'file' => 'dblog.admin.inc',
+   );
+   $items['admin/reports/access-denied'] = array(
+@@ -69,12 +72,14 @@ function dblog_menu() {
+     'description' => "View 'access denied' errors (403s).",
+     'page callback' => 'dblog_top',
+     'page arguments' => array('access denied'),
++    'access arguments' => array('access site reports'),
+     'file' => 'dblog.admin.inc',
+   );
+   $items['admin/reports/event/%'] = array(
+     'title' => 'Details',
+     'page callback' => 'dblog_event',
+     'page arguments' => array(3),
++    'access arguments' => array('access site reports'),
+     'type' => MENU_CALLBACK,
+     'file' => 'dblog.admin.inc',
+   );
+@@ -98,7 +103,7 @@ function dblog_init() {
+ function dblog_cron() {
+   // Cleanup the watchdog table
+   $max = db_result(db_query('SELECT MAX(wid) FROM {watchdog}'));
+-  db_query('DELETE FROM {watchdog} WHERE wid < %d', $max - variable_get('dblog_row_limit', 1000));
++  db_query('DELETE FROM {watchdog} WHERE wid <= %d', $max - variable_get('dblog_row_limit', 1000));
+ }
+ 
+ /**
+diff --git a/modules/filter/filter.module b/modules/filter/filter.module
+index 18f3e39..f955c4d 100644
+--- a/modules/filter/filter.module
++++ b/modules/filter/filter.module
+@@ -82,6 +82,7 @@ function filter_menu() {
+   $items['admin/settings/filters/add'] = array(
+     'title' => 'Add input format',
+     'page callback' => 'filter_admin_format_page',
++    'access arguments' => array('administer filters'),
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 1,
+     'file' => 'filter.admin.inc',
+@@ -90,6 +91,7 @@ function filter_menu() {
+     'title' => 'Delete input format',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('filter_admin_delete'),
++    'access arguments' => array('administer filters'),
+     'type' => MENU_CALLBACK,
+     'file' => 'filter.admin.inc',
+   );
+@@ -120,6 +122,7 @@ function filter_menu() {
+     'title' => 'Configure',
+     'page callback' => 'filter_admin_configure_page',
+     'page arguments' => array(3),
++    'access arguments' => array('administer filters'),
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 1,
+     'file' => 'filter.admin.inc',
+@@ -128,6 +131,7 @@ function filter_menu() {
+     'title' => 'Rearrange',
+     'page callback' => 'filter_admin_order_page',
+     'page arguments' => array(3),
++    'access arguments' => array('administer filters'),
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 2,
+     'file' => 'filter.admin.inc',
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index 4097240..b8f7353 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -106,6 +106,7 @@ function forum_menu() {
+     'title' => 'Add container',
+     'page callback' => 'forum_form_main',
+     'page arguments' => array('container'),
++    'access arguments' => array('administer forums'),
+     'type' => MENU_LOCAL_TASK,
+     'parent' => 'admin/content/forum',
+     'file' => 'forum.admin.inc',
+@@ -114,6 +115,7 @@ function forum_menu() {
+     'title' => 'Add forum',
+     'page callback' => 'forum_form_main',
+     'page arguments' => array('forum'),
++    'access arguments' => array('administer forums'),
+     'type' => MENU_LOCAL_TASK,
+     'parent' => 'admin/content/forum',
+     'file' => 'forum.admin.inc',
+@@ -122,6 +124,7 @@ function forum_menu() {
+     'title' => 'Settings',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('forum_admin_settings'),
++    'access arguments' => array('administer forums'),
+     'weight' => 5,
+     'type' => MENU_LOCAL_TASK,
+     'parent' => 'admin/content/forum',
+@@ -129,6 +132,7 @@ function forum_menu() {
+   );
+   $items['admin/content/forum/edit/%forum_term'] = array(
+     'page callback' => 'forum_form_main',
++    'access arguments' => array('administer forums'),
+     'type' => MENU_CALLBACK,
+     'file' => 'forum.admin.inc',
+   );
+@@ -136,6 +140,7 @@ function forum_menu() {
+     'title' => 'Edit container',
+     'page callback' => 'forum_form_main',
+     'page arguments' => array('container', 5),
++    'access arguments' => array('administer forums'),
+     'type' => MENU_CALLBACK,
+     'file' => 'forum.admin.inc',
+   );
+@@ -143,6 +148,7 @@ function forum_menu() {
+     'title' => 'Edit forum',
+     'page callback' => 'forum_form_main',
+     'page arguments' => array('forum', 5),
++    'access arguments' => array('administer forums'),
+     'type' => MENU_CALLBACK,
+     'file' => 'forum.admin.inc',
+   );
+diff --git a/modules/help/help.module b/modules/help/help.module
+index 2daff64..4cdcfeb 100644
+--- a/modules/help/help.module
++++ b/modules/help/help.module
+@@ -23,6 +23,7 @@ function help_menu() {
+       'title' => $module,
+       'page callback' => 'help_page',
+       'page arguments' => array(2),
++      'access arguments' => array('access administration pages'),
+       'type' => MENU_CALLBACK,
+       'file' => 'help.admin.inc',
+     );
+diff --git a/modules/locale/locale.module b/modules/locale/locale.module
+index 0404467..02ee9f7 100644
+--- a/modules/locale/locale.module
++++ b/modules/locale/locale.module
+@@ -99,6 +99,7 @@ function locale_menu() {
+     'title' => 'Add language',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('locale_languages_add_screen'), // two forms concatenated
++    'access arguments' => array('administer languages'),
+     'weight' => 5,
+     'type' => MENU_LOCAL_TASK,
+   );
+@@ -106,6 +107,7 @@ function locale_menu() {
+     'title' => 'Configure',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('drupal_get_form', 'locale_languages_configure_form'),
++    'access arguments' => array('administer languages'),
+     'weight' => 10,
+     'type' => MENU_LOCAL_TASK,
+   );
+@@ -113,12 +115,14 @@ function locale_menu() {
+     'title' => 'Edit language',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('drupal_get_form', 'locale_languages_edit_form', 4),
++    'access arguments' => array('administer languages'),
+     'type' => MENU_CALLBACK,
+   );
+   $items['admin/settings/language/delete/%'] = array(
+     'title' => 'Confirm',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('drupal_get_form', 'locale_languages_delete_form', 4),
++    'access arguments' => array('administer languages'),
+     'type' => MENU_CALLBACK,
+   );
+ 
+@@ -141,11 +145,13 @@ function locale_menu() {
+     'type' => MENU_LOCAL_TASK,
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('locale_translate_seek_screen'), // search results and form concatenated
++    'access arguments' => array('translate interface'),
+   );
+   $items['admin/build/translate/import'] = array(
+     'title' => 'Import',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('drupal_get_form', 'locale_translate_import_form'),
++    'access arguments' => array('translate interface'),
+     'weight' => 20,
+     'type' => MENU_LOCAL_TASK,
+   );
+@@ -153,6 +159,7 @@ function locale_menu() {
+     'title' => 'Export',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('locale_translate_export_screen'), // possibly multiple forms concatenated
++    'access arguments' => array('translate interface'),
+     'weight' => 30,
+     'type' => MENU_LOCAL_TASK,
+   );
+@@ -160,12 +167,14 @@ function locale_menu() {
+     'title' => 'Edit string',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('drupal_get_form', 'locale_translate_edit_form', 4),
++    'access arguments' => array('translate interface'),
+     'type' => MENU_CALLBACK,
+   );
+   $items['admin/build/translate/delete/%'] = array(
+     'title' => 'Delete string',
+     'page callback' => 'locale_inc_callback',
+     'page arguments' => array('locale_translate_delete', 4),  // directly deletes, no confirmation
++    'access arguments' => array('translate interface'),
+     'type' => MENU_CALLBACK,
+   );
+ 
+diff --git a/modules/menu/menu.module b/modules/menu/menu.module
+index 03fca87..ba0a1fb 100644
+--- a/modules/menu/menu.module
++++ b/modules/menu/menu.module
+@@ -63,6 +63,7 @@ function menu_menu() {
+     'title' => 'Add menu',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('menu_edit_menu', 'add'),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'menu.admin.inc',
+   );
+@@ -70,6 +71,7 @@ function menu_menu() {
+     'title' => 'Settings',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('menu_configure'),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 5,
+     'file' => 'menu.admin.inc',
+@@ -94,6 +96,7 @@ function menu_menu() {
+     'title' => 'Add item',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('menu_edit_item', 'add', NULL, 3),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'menu.admin.inc',
+   );
+@@ -101,6 +104,7 @@ function menu_menu() {
+     'title' => 'Edit menu',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('menu_edit_menu', 'edit', 3),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'menu.admin.inc',
+   );
+@@ -108,6 +112,7 @@ function menu_menu() {
+     'title' => 'Delete menu',
+     'page callback' => 'menu_delete_menu_page',
+     'page arguments' => array(3),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_CALLBACK,
+     'file' => 'menu.admin.inc',
+   );
+@@ -115,6 +120,7 @@ function menu_menu() {
+     'title' => 'Edit menu item',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('menu_edit_item', 'edit', 4, NULL),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_CALLBACK,
+     'file' => 'menu.admin.inc',
+   );
+@@ -122,6 +128,7 @@ function menu_menu() {
+     'title' => 'Reset menu item',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('menu_reset_item_confirm', 4),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_CALLBACK,
+     'file' => 'menu.admin.inc',
+   );
+@@ -129,6 +136,7 @@ function menu_menu() {
+     'title' => 'Delete menu item',
+     'page callback' => 'menu_item_delete_page',
+     'page arguments' => array(4),
++    'access arguments' => array('administer menu'),
+     'type' => MENU_CALLBACK,
+     'file' => 'menu.admin.inc',
+   );
+diff --git a/modules/node/node.admin.inc b/modules/node/node.admin.inc
+index 21e4c4e..aaac957 100644
+--- a/modules/node/node.admin.inc
++++ b/modules/node/node.admin.inc
+@@ -10,8 +10,9 @@
+  * Menu callback; presents general node configuration options.
+  */
+ function node_configure() {
+-  // Only show rebuild button if there is 0 or more than 2 rows in node_access table,
+-  // or if there are modules that implement node_grant.
++  // Only show rebuild button if there are either 0, or 2 or more, rows
++  // in the {node_access} table, or if there are modules that
++  // implement hook_node_grants().
+   if (db_result(db_query('SELECT COUNT(*) FROM {node_access}')) != 1 || count(module_implements('node_grants')) > 0) {
+     $status = '<p>'. t('If the site is experiencing problems with permissions to content, you may have to rebuild the permissions cache. Possible causes for permission problems are disabling modules or configuration changes to permissions. Rebuilding will remove all privileges to posts, and replace them with permissions based on the current modules and settings.') .'</p>';
+     $status .= '<p>'. t('Rebuilding may take some time if there is a lot of content or complex permission settings. After rebuilding has completed posts will automatically use the new permissions.') .'</p>';
+diff --git a/modules/node/node.module b/modules/node/node.module
+index 2d75015..b7e1ed7 100644
+--- a/modules/node/node.module
++++ b/modules/node/node.module
+@@ -1150,7 +1150,7 @@ function node_search($op = 'search', $keys = NULL) {
+ 
+     case 'status':
+       $total = db_result(db_query('SELECT COUNT(*) FROM {node} WHERE status = 1'));
+-      $remaining = db_result(db_query("SELECT COUNT(*) FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE d.sid IS NULL OR d.reindex <> 0"));
++      $remaining = db_result(db_query("SELECT COUNT(*) FROM {node} n LEFT JOIN {search_dataset} d ON d.type = 'node' AND d.sid = n.nid WHERE n.status = 1 AND (d.sid IS NULL OR d.reindex <> 0)"));
+       return array('remaining' => $remaining, 'total' => $total);
+ 
+     case 'admin':
+@@ -1447,6 +1447,7 @@ function node_menu() {
+     'title' => 'Add content type',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('node_type_form'),
++    'access arguments' => array('administer content types'),
+     'file' => 'content_types.inc',
+     'type' => MENU_LOCAL_TASK,
+   );
+@@ -1485,6 +1486,7 @@ function node_menu() {
+       'title' => $type->name,
+       'page callback' => 'drupal_get_form',
+       'page arguments' => array('node_type_form', $type),
++      'access arguments' => array('administer content types'),
+       'file' => 'content_types.inc',
+       'type' => MENU_CALLBACK,
+     );
+@@ -1495,6 +1497,7 @@ function node_menu() {
+     $items['admin/content/node-type/'. $type_url_str .'/delete'] = array(
+       'title' => 'Delete',
+       'page arguments' => array('node_type_delete_confirm', $type),
++      'access arguments' => array('administer content types'),
+       'file' => 'content_types.inc',
+       'type' => MENU_CALLBACK,
+     );
+@@ -1545,6 +1548,8 @@ function node_menu() {
+     'load arguments' => array(3),
+     'page callback' => 'node_show',
+     'page arguments' => array(1, NULL, TRUE),
++    'access callback' => '_node_revision_access',
++    'access arguments' => array(1),
+     'type' => MENU_CALLBACK,
+   );
+   $items['node/%node/revisions/%/revert'] = array(
+diff --git a/modules/openid/openid.module b/modules/openid/openid.module
+index d77ee73..0aec370 100644
+--- a/modules/openid/openid.module
++++ b/modules/openid/openid.module
+@@ -30,6 +30,8 @@ function openid_menu() {
+     'title' => 'Delete OpenID',
+     'page callback' => 'openid_user_delete',
+     'page arguments' => array(1),
++    'access callback' => 'user_edit_access',
++    'access arguments' => array(1),
+     'type' => MENU_CALLBACK,
+     'file' => 'openid.pages.inc',
+   );
+diff --git a/modules/path/path.module b/modules/path/path.module
+index 87bd6cd..6f622f7 100644
+--- a/modules/path/path.module
++++ b/modules/path/path.module
+@@ -46,6 +46,7 @@ function path_menu() {
+   $items['admin/build/path/edit'] = array(
+     'title' => 'Edit alias',
+     'page callback' => 'path_admin_edit',
++    'access arguments' => array('administer url aliases'),
+     'type' => MENU_CALLBACK,
+     'file' => 'path.admin.inc',
+   );
+@@ -53,6 +54,7 @@ function path_menu() {
+     'title' => 'Delete alias',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('path_admin_delete_confirm'),
++    'access arguments' => array('administer url aliases'),
+     'type' => MENU_CALLBACK,
+     'file' => 'path.admin.inc',
+   );
+diff --git a/modules/profile/profile.module b/modules/profile/profile.module
+index c75c113..eb0de4c 100644
+--- a/modules/profile/profile.module
++++ b/modules/profile/profile.module
+@@ -95,12 +95,14 @@ function profile_menu() {
+     'title' => 'Add field',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('profile_field_form'),
++    'access arguments' => array('administer users'),
+     'type' => MENU_CALLBACK,
+     'file' => 'profile.admin.inc',
+   );
+   $items['admin/user/profile/autocomplete'] = array(
+     'title' => 'Profile category autocomplete',
+     'page callback' => 'profile_admin_settings_autocomplete',
++    'access arguments' => array('administer users'),
+     'type' => MENU_CALLBACK,
+     'file' => 'profile.admin.inc',
+   );
+@@ -108,6 +110,7 @@ function profile_menu() {
+     'title' => 'Edit field',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('profile_field_form'),
++    'access arguments' => array('administer users'),
+     'type' => MENU_CALLBACK,
+     'file' => 'profile.admin.inc',
+   );
+@@ -115,6 +118,7 @@ function profile_menu() {
+     'title' => 'Delete field',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('profile_field_delete'),
++    'access arguments' => array('administer users'),
+     'type' => MENU_CALLBACK,
+     'file' => 'profile.admin.inc',
+   );
+@@ -453,7 +457,7 @@ function profile_categories() {
+       'title' => $category->category,
+       'weight' => 3,
+       'access callback' => 'profile_category_access',
+-      'access arguments' => array($category->category)
++      'access arguments' => array(1, $category->category)
+     );
+   }
+   return $data;
+@@ -462,12 +466,12 @@ function profile_categories() {
+ /**
+  * Menu item access callback - check if a user has access to a profile category.
+  */
+-function profile_category_access($category) {
+-  if (user_access('administer users')) {
++function profile_category_access($account, $category) {
++  if (user_access('administer users') && $account->uid > 0) {
+     return TRUE;
+   }
+   else {
+-    return db_result(db_query("SELECT COUNT(*) FROM {profile_fields} WHERE category = '%s' AND visibility <> %d", $category, PROFILE_HIDDEN));
++    return user_edit_access($account) && db_result(db_query("SELECT COUNT(*) FROM {profile_fields} WHERE category = '%s' AND visibility <> %d", $category, PROFILE_HIDDEN));
+   }
+ }
+ 
+diff --git a/modules/search/search.module b/modules/search/search.module
+index 7a4c69c..b7ca869 100644
+--- a/modules/search/search.module
++++ b/modules/search/search.module
+@@ -194,6 +194,7 @@ function search_menu() {
+     'description' => 'View most popular search phrases.',
+     'page callback' => 'dblog_top',
+     'page arguments' => array('search'),
++    'access arguments' => array('access site reports'),
+     'file' => 'dblog.admin.inc',
+     'file path' => drupal_get_path('module', 'dblog'),
+   );
+diff --git a/modules/syslog/syslog.module b/modules/syslog/syslog.module
+index b9810ea..5706cb1 100644
+--- a/modules/syslog/syslog.module
++++ b/modules/syslog/syslog.module
+@@ -32,6 +32,7 @@ function syslog_menu() {
+     'description'    => 'Settings for syslog logging. Syslog is an operating system administrative logging tool used in systems management and security auditing. Most suited to medium and large sites, syslog provides filtering tools that allow messages to be routed by type and severity.',
+     'page callback'  => 'drupal_get_form',
+     'page arguments' => array('syslog_admin_settings'),
++    'access arguments' => array('administer site configuration'),
+   );
+   return $items;
+ }
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index edfb2a9..dbba70e 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -1359,7 +1359,7 @@ function system_performance_settings() {
+  */
+ function system_clear_cache_submit(&$form_state, $form) {
+   drupal_flush_all_caches();
+-  drupal_set_message('Caches cleared.');
++  drupal_set_message(t('Caches cleared.'));
+ }
+ 
+ /**
+diff --git a/modules/system/system.module b/modules/system/system.module
+index c8e7ca9..5f5cc34 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.1');
++define('VERSION', '6.2');
+ 
+ /**
+  * Core API compatibility.
+@@ -212,18 +212,21 @@ function system_menu() {
+   $items['admin/compact'] = array(
+     'title' => 'Compact mode',
+     'page callback' => 'system_admin_compact_page',
++    'access arguments' => array('access administration pages'),
+     'type' => MENU_CALLBACK,
+     'file' => 'system.admin.inc',
+   );
+   $items['admin/by-task'] = array(
+     'title' => 'By task',
+     'page callback' => 'system_main_admin_page',
++    'access arguments' => array('access administration pages'),
+     'file' => 'system.admin.inc',
+     'type' => MENU_DEFAULT_LOCAL_TASK,
+   );
+   $items['admin/by-module'] = array(
+     'title' => 'By module',
+     'page callback' => 'system_admin_by_module',
++    'access arguments' => array('access administration pages'),
+     'file' => 'system.admin.inc',
+     'type' => MENU_LOCAL_TASK,
+     'weight' => 2,
+@@ -234,6 +237,7 @@ function system_menu() {
+     'position' => 'left',
+     'weight' => -10,
+     'page callback' => 'system_admin_menu_block_page',
++    'access arguments' => array('access administration pages'),
+     'file' => 'system.admin.inc',
+   );
+ 
+@@ -244,6 +248,7 @@ function system_menu() {
+     'position' => 'right',
+     'weight' => -5,
+     'page callback' => 'system_settings_overview',
++    'access arguments' => array('access administration pages'),
+     'file' => 'system.admin.inc',
+   );
+   $items['admin/build'] = array(
+@@ -252,6 +257,7 @@ function system_menu() {
+     'position' => 'right',
+     'weight' => -10,
+     'page callback' => 'system_admin_menu_block_page',
++    'access arguments' => array('access administration pages'),
+     'file' => 'system.admin.inc',
+   );
+   $items['admin/settings/admin'] = array(
+@@ -282,6 +288,7 @@ function system_menu() {
+   $items['admin/build/themes/settings'] = array(
+     'title' => 'Configure',
+     'page arguments' => array('system_theme_settings'),
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_LOCAL_TASK,
+   );
+   // Theme configuration subtabs
+@@ -316,15 +323,18 @@ function system_menu() {
+   );
+   $items['admin/build/modules/list/confirm'] = array(
+     'title' => 'List',
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_CALLBACK,
+   );
+   $items['admin/build/modules/uninstall'] = array(
+     'title' => 'Uninstall',
+     'page arguments' => array('system_modules_uninstall'),
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_LOCAL_TASK,
+   );
+   $items['admin/build/modules/uninstall/confirm'] = array(
+     'title' => 'Uninstall',
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_CALLBACK,
+   );
+ 
+@@ -346,6 +356,7 @@ function system_menu() {
+     'title' => 'Configure an advanced action',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('system_actions_configure'),
++    'access arguments' => array('administer actions'),
+     'type' => MENU_CALLBACK,
+   );
+   $items['admin/settings/actions/delete/%actions'] = array(
+@@ -353,11 +364,13 @@ function system_menu() {
+     'description' => 'Delete an action.',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('system_actions_delete_form', 4),
++    'access arguments' => array('administer actions'),
+     'type' => MENU_CALLBACK,
+   );
+   $items['admin/settings/actions/orphan'] = array(
+     'title' => 'Remove orphans',
+     'page callback' => 'system_actions_remove_orphans',
++    'access arguments' => array('administer actions'),
+     'type' => MENU_CALLBACK,
+   );
+ 
+@@ -429,6 +442,7 @@ function system_menu() {
+     'title' => 'Date and time lookup',
+     'type' => MENU_CALLBACK,
+     'page callback' => 'system_date_time_lookup',
++    'access arguments' => array('administer site configuration'),
+     'file' => 'system.admin.inc',
+   );
+   $items['admin/settings/site-maintenance'] = array(
+@@ -485,18 +499,21 @@ function system_menu() {
+   $items['admin/reports/status/run-cron'] = array(
+     'title' => 'Run cron',
+     'page callback' => 'system_run_cron',
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_CALLBACK,
+     'file' => 'system.admin.inc',
+   );
+   $items['admin/reports/status/php'] = array(
+     'title' => 'PHP',
+     'page callback' => 'system_php',
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_CALLBACK,
+     'file' => 'system.admin.inc',
+   );
+   $items['admin/reports/status/sql'] = array(
+     'title' => 'SQL',
+     'page callback' => 'system_sql',
++    'access arguments' => array('administer site configuration'),
+     'type' => MENU_CALLBACK,
+     'file' => 'system.admin.inc',
+   );
+@@ -1227,6 +1244,11 @@ function system_cron() {
+     }
+     db_query('DELETE FROM {files} WHERE fid = %d', $file->fid);
+   }
++  $core = array('cache', 'cache_block', 'cache_filter', 'cache_page', 'cache_form', 'cache_menu');
++  $cache_tables = array_merge(module_invoke_all('flush_caches'), $core);
++  foreach ($cache_tables as $table) {
++    cache_clear_all(NULL, $table);
++  }
+ }
+ 
+ /**
+diff --git a/modules/taxonomy/taxonomy.module b/modules/taxonomy/taxonomy.module
+index af40899..da4d2a1 100644
+--- a/modules/taxonomy/taxonomy.module
++++ b/modules/taxonomy/taxonomy.module
+@@ -128,6 +128,7 @@ function taxonomy_menu() {
+     'title' => 'Add vocabulary',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('taxonomy_form_vocabulary'),
++    'access arguments' => array('administer taxonomy'),
+     'type' => MENU_LOCAL_TASK,
+     'parent' => 'admin/content/taxonomy',
+     'file' => 'taxonomy.admin.inc',
+@@ -137,6 +138,7 @@ function taxonomy_menu() {
+     'title' => 'Edit vocabulary',
+     'page callback' => 'taxonomy_admin_vocabulary_edit',
+     'page arguments' => array(5),
++    'access arguments' => array('administer taxonomy'),
+     'type' => MENU_CALLBACK,
+     'file' => 'taxonomy.admin.inc',
+   );
+@@ -144,6 +146,7 @@ function taxonomy_menu() {
+   $items['admin/content/taxonomy/edit/term'] = array(
+     'title' => 'Edit term',
+     'page callback' => 'taxonomy_admin_term_edit',
++    'access arguments' => array('administer taxonomy'),
+     'type' => MENU_CALLBACK,
+     'file' => 'taxonomy.admin.inc',
+   );
+@@ -183,6 +186,7 @@ function taxonomy_menu() {
+     'title' => 'Add term',
+     'page callback' => 'taxonomy_add_term_page',
+     'page arguments' => array(3),
++    'access arguments' => array('administer taxonomy'),
+     'type' => MENU_LOCAL_TASK,
+     'parent' => 'admin/content/taxonomy/%taxonomy_vocabulary',
+     'file' => 'taxonomy.admin.inc',
+diff --git a/modules/tracker/tracker.module b/modules/tracker/tracker.module
+index c3e4cd1..d1d2555 100644
+--- a/modules/tracker/tracker.module
++++ b/modules/tracker/tracker.module
+@@ -33,11 +33,11 @@ function tracker_menu() {
+   $items['tracker/all'] = array(
+     'title' => 'All recent posts',
+     'type' => MENU_DEFAULT_LOCAL_TASK,
+-    'access callback' => 'user_is_logged_in',
+   );
+-  $items['tracker/%user_current'] = array(
++  $items['tracker/%user_uid_optional'] = array(
+     'title' => 'My recent posts',
+-    'access callback' => 'user_is_logged_in',
++    'access callback' => '_tracker_myrecent_access',
++    'access arguments' => array(1),
+     'page arguments' => array(1),
+     'type' => MENU_LOCAL_TASK,
+   );
+@@ -46,6 +46,8 @@ function tracker_menu() {
+     'title' => 'Track',
+     'page callback' => 'tracker_page',
+     'page arguments' => array(1, TRUE),
++    'access callback' => '_tracker_user_access',
++    'access arguments' => array(1),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'tracker.pages.inc',
+   );
+@@ -55,3 +57,19 @@ function tracker_menu() {
+   );
+   return $items;
+ }
++
++/**
++ * Access callback for tracker/%user_uid_optional
++ */
++function _tracker_myrecent_access($account) {
++  // This path is only allowed for authenticated users looking at their own posts.
++  return $account->uid && ($GLOBALS['user']->uid == $account->uid) && user_access('access content');
++}
++
++/**
++ * Access callback for user/%user/track
++ */
++function _tracker_user_access($account) {
++  return user_view_access($account) && user_access('access content');
++}
++
+diff --git a/modules/trigger/trigger.module b/modules/trigger/trigger.module
+index 3878804..d9d9793 100644
+--- a/modules/trigger/trigger.module
++++ b/modules/trigger/trigger.module
+@@ -49,6 +49,7 @@ function trigger_menu() {
+     'title' => 'Content',
+     'page callback' => 'trigger_assign',
+     'page arguments' => array('node'),
++    'access callback' => 'trigger_access_check',
+     'access arguments' => array('node'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'trigger.admin.inc',
+@@ -57,6 +58,7 @@ function trigger_menu() {
+     'title' => 'Users',
+     'page callback' => 'trigger_assign',
+     'page arguments' => array('user'),
++    'access callback' => 'trigger_access_check',
+     'access arguments' => array('user'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'trigger.admin.inc',
+@@ -83,6 +85,7 @@ function trigger_menu() {
+     'title' => 'Cron',
+     'page callback' => 'trigger_assign',
+     'page arguments' => array('cron'),
++    'access arguments' => array('administer actions'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'trigger.admin.inc',
+   );
+@@ -112,6 +115,7 @@ function trigger_menu() {
+     'description' => 'Unassign an action from a trigger.',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('trigger_unassign'),
++    'access arguments' => array('administer actions'),
+     'type' => MENU_CALLBACK,
+     'file' => 'trigger.admin.inc',
+   );
+diff --git a/modules/update/update.fetch.inc b/modules/update/update.fetch.inc
+index da5c695..3edda9c 100644
+--- a/modules/update/update.fetch.inc
++++ b/modules/update/update.fetch.inc
+@@ -54,11 +54,11 @@ function _update_refresh() {
+     $frequency = variable_get('update_check_frequency', 1);
+     cache_set('update_info', $available, 'cache_update', time() + (60 * 60 * 24 * $frequency));
+     variable_set('update_last_check', time());
+-    watchdog('update', 'Fetched information about all available new releases and updates.', array(), WATCHDOG_NOTICE, l('view', 'admin/reports/updates'));
++    watchdog('update', 'Fetched information about all available new releases and updates.', array(), WATCHDOG_NOTICE, l(t('view'), 'admin/reports/updates'));
+   }
+   else {
+     module_invoke('system', 'check_http_request');
+-    watchdog('update', 'Unable to fetch any information about available new releases and updates.', array(), WATCHDOG_ERROR, l('view', 'admin/reports/updates'));
++    watchdog('update', 'Unable to fetch any information about available new releases and updates.', array(), WATCHDOG_ERROR, l(t('view'), 'admin/reports/updates'));
+   }
+   return $available;
+ }
+diff --git a/modules/user/user.module b/modules/user/user.module
+index dfb4fc2..8bc0321 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -867,6 +867,9 @@ function user_view_access($account) {
+     );
+ }
+ 
++/**
++ * Access callback for user account editing.
++ */
+ function user_edit_access($account) {
+   return (($GLOBALS['user']->uid == $account->uid) || user_access('administer users')) && $account->uid > 0;
+ }
+@@ -956,6 +959,7 @@ function user_menu() {
+   $items['admin/user/user/create'] = array(
+     'title' => 'Add user',
+     'page arguments' => array('create'),
++    'access arguments' => array('administer users'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'user.admin.inc',
+   );
+@@ -988,6 +992,7 @@ function user_menu() {
+   $items['admin/user/roles/edit'] = array(
+     'title' => 'Edit role',
+     'page arguments' => array('user_admin_role'),
++    'access arguments' => array('administer permissions'),
+     'type' => MENU_CALLBACK,
+     'file' => 'user.admin.inc',
+   );
+@@ -1006,18 +1011,21 @@ function user_menu() {
+   $items['admin/user/rules/add'] = array(
+     'title' => 'Add rule',
+     'page callback' => 'user_admin_access_add',
++    'access arguments' => array('administer permissions'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'user.admin.inc',
+   );
+   $items['admin/user/rules/check'] = array(
+     'title' => 'Check rules',
+     'page callback' => 'user_admin_access_check',
++    'access arguments' => array('administer permissions'),
+     'type' => MENU_LOCAL_TASK,
+     'file' => 'user.admin.inc',
+   );
+   $items['admin/user/rules/edit'] = array(
+     'title' => 'Edit rule',
+     'page callback' => 'user_admin_access_edit',
++    'access arguments' => array('administer permissions'),
+     'type' => MENU_CALLBACK,
+     'file' => 'user.admin.inc',
+   );
+@@ -1025,6 +1033,7 @@ function user_menu() {
+     'title' => 'Delete rule',
+     'page callback' => 'drupal_get_form',
+     'page arguments' => array('user_admin_access_delete_confirm'),
++    'access arguments' => array('administer permissions'),
+     'type' => MENU_CALLBACK,
+     'file' => 'user.admin.inc',
+   );
+@@ -1037,7 +1046,7 @@ function user_menu() {
+     'file' => 'user.pages.inc',
+   );
+ 
+-  $items['user/%user_current'] = array(
++  $items['user/%user_uid_optional'] = array(
+     'title' => 'My account',
+     'title callback' => 'user_page_title',
+     'title arguments' => array(1),
+@@ -1092,8 +1101,8 @@ function user_menu() {
+           'title arguments' => array($category['title']),
+           'page callback' => 'user_edit',
+           'page arguments' => array(1, 3),
+-          'access callback' => isset($category['access callback']) ? $category['access callback'] : TRUE,
+-          'access arguments' => isset($category['access arguments']) ? $category['access arguments'] : array(),
++          'access callback' => isset($category['access callback']) ? $category['access callback'] : 'user_edit_access',
++          'access arguments' => isset($category['access arguments']) ? $category['access arguments'] : array(1),
+           'type' => MENU_LOCAL_TASK,
+           'weight' => $category['weight'],
+           'load arguments' => array('%map', '%index'),
+@@ -1110,8 +1119,8 @@ function user_init() {
+   drupal_add_css(drupal_get_path('module', 'user') .'/user.css', 'module');
+ }
+ 
+-function user_current_load($arg) {
+-  return user_load($arg ? $arg : $GLOBALS['user']->uid);
++function user_uid_optional_load($arg) {
++  return user_load(isset($arg) ? $arg : $GLOBALS['user']->uid);
+ }
+ 
+ /**
+@@ -1156,7 +1165,7 @@ function user_category_load($uid, &$map, $index) {
+ /**
+  * Returns the user id of the currently logged in user.
+  */
+-function user_current_to_arg($arg) {
++function user_uid_optional_to_arg($arg) {
+   // Give back the current user uid when called from eg. tracker, aka.
+   // with an empty arg. Also use the current user uid when called from
+   // the menu with a % for the current account link.
+@@ -1224,7 +1233,7 @@ function user_set_authmaps($account, $authmaps) {
+  *
+  * @ingroup forms
+  */
+-function user_login(&$form_state, $msg = '') {
++function user_login(&$form_state) {
+   global $user;
+ 
+   // If we are already logged on, go to the user page instead.
+@@ -1233,9 +1242,6 @@ function user_login(&$form_state, $msg = '') {
+   }
+ 
+   // Display login form:
+-  if ($msg) {
+-    $form['message'] = array('#value' => '<p>'. check_plain($msg) .'</p>');
+-  }
+   $form['name'] = array('#type' => 'textfield',
+     '#title' => t('Username'),
+     '#size' => 60,

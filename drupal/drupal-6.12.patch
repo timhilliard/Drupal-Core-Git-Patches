@@ -1,0 +1,238 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 72a6e18..a7da2ce 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,5 +1,10 @@
+ // $Id$
+ 
++Drupal 6.12, 2009-05-13
++----------------------
++- Fixed security issues (Cross site scripting), see SA-CORE-2009-006.
++- Fixed a variety of small bugs.
++
+ Drupal 6.11, 2009-04-29
+ ----------------------
+ - Fixed security issues (Cross site scripting and limited information
+@@ -181,6 +186,11 @@ Drupal 6.0, 2008-02-13
+ - Removed old system updates. Updates from Drupal versions prior to 5.x will
+   require upgrading to 5.x before upgrading to 6.x.
+ 
++Drupal 5.18, 2009-05-13
++----------------------
++- Fixed security issues (Cross site scripting), see SA-CORE-2009-006.
++- Fixed a variety of small bugs.
++
+ Drupal 5.17, 2009-04-29
+ -----------------------
+ - Fixed security issues (Cross site scripting and limited information disclosure) see SA-CORE-2009-005.
+diff --git a/includes/common.inc b/includes/common.inc
+index ed8ebab..f282bb3 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -352,11 +352,6 @@ function drupal_not_found() {
+ 
+   watchdog('page not found', check_plain($_GET['q']), NULL, WATCHDOG_WARNING);
+ 
+-  // Keep old path for reference.
+-  if (!isset($_REQUEST['destination'])) {
+-    $_REQUEST['destination'] = $_GET['q'];
+-  }
+-
+   $path = drupal_get_normal_path(variable_get('site_404', ''));
+   if ($path && $path != $_GET['q']) {
+     // Set the active item in case there are tabs to display, or other
+@@ -379,12 +374,8 @@ function drupal_not_found() {
+  */
+ function drupal_access_denied() {
+   drupal_set_header('HTTP/1.1 403 Forbidden');
+-  watchdog('access denied', check_plain($_GET['q']), NULL, WATCHDOG_WARNING);
+ 
+-  // Keep old path for reference.
+-  if (!isset($_REQUEST['destination'])) {
+-    $_REQUEST['destination'] = $_GET['q'];
+-  }
++  watchdog('access denied', check_plain($_GET['q']), NULL, WATCHDOG_WARNING);
+ 
+   $path = drupal_get_normal_path(variable_get('site_403', ''));
+   if ($path && $path != $_GET['q']) {
+diff --git a/includes/form.inc b/includes/form.inc
+index 3e48dcb..6bfd019 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -624,12 +624,6 @@ function drupal_redirect_form($form, $redirect = NULL) {
+   }
+   if (!isset($goto) || ($goto !== FALSE)) {
+     if (isset($goto)) {
+-      // Remove any fake destination set by drupal_not_found() or
+-      // drupal_access_denied() so that we can properly redirect from those
+-      // pages.
+-      if (isset($_REQUEST['destination']) && $_REQUEST['destination'] == $_GET['q']) {
+-        unset($_REQUEST['destination']);
+-      }
+       if (is_array($goto)) {
+         call_user_func_array('drupal_goto', $goto);
+       }
+diff --git a/includes/theme.inc b/includes/theme.inc
+index cfa4ad3..d6daf69 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -688,7 +688,7 @@ function theme() {
+   // restore path_to_theme()
+   $theme_path = $temp;
+   // Add final markup to the full page.
+-  if ($hook == 'page') {
++  if ($hook == 'page' || $hook == 'book_export_html') {
+     $output = drupal_final_markup($output);
+   }
+   return $output;
+diff --git a/modules/book/book-export-html.tpl.php b/modules/book/book-export-html.tpl.php
+index 3c94a08..912273f 100644
+--- a/modules/book/book-export-html.tpl.php
++++ b/modules/book/book-export-html.tpl.php
+@@ -20,8 +20,8 @@
+ <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+ <html xmlns="http://www.w3.org/1999/xhtml" lang="<?php print $language->language; ?>" xml:lang="<?php print $language->language; ?>">
+   <head>
+-    <title><?php print $title; ?></title>
+     <?php print $head; ?>
++    <title><?php print $title; ?></title>
+     <base href="<?php print $base_url; ?>" />
+     <link type="text/css" rel="stylesheet" href="misc/print.css" />
+     <?php if ($language_rtl): ?>
+diff --git a/modules/comment/comment.module b/modules/comment/comment.module
+index 39a40ff..7bc02dd 100644
+--- a/modules/comment/comment.module
++++ b/modules/comment/comment.module
+@@ -1541,7 +1541,9 @@ function comment_form_submit($form, &$form_state) {
+   _comment_form_submit($form_state['values']);
+   if ($cid = comment_save($form_state['values'])) {
+     $node = node_load($form_state['values']['nid']);
+-    $page = comment_new_page_count($node->comment_count, 1, $node);
++    // Add 1 to existing $node->comment count to include new comment being added.
++    $comment_count = $node->comment_count + 1;
++    $page = comment_new_page_count($comment_count, 1, $node);
+     $form_state['redirect'] = array('node/'. $node->nid, $page, "comment-$cid");
+     return;
+   }
+diff --git a/modules/system/system.module b/modules/system/system.module
+index 0bc059b..71f2486 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.11');
++define('VERSION', '6.12');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/taxonomy/taxonomy.module b/modules/taxonomy/taxonomy.module
+index 736b618..4a07d26 100644
+--- a/modules/taxonomy/taxonomy.module
++++ b/modules/taxonomy/taxonomy.module
+@@ -415,7 +415,7 @@ function taxonomy_del_term($tid) {
+  */
+ function taxonomy_form($vid, $value = 0, $help = NULL, $name = 'taxonomy') {
+   $vocabulary = taxonomy_vocabulary_load($vid);
+-  $help = ($help) ? $help : $vocabulary->help;
++  $help = ($help) ? $help : filter_xss_admin($vocabulary->help);
+ 
+   if (!$vocabulary->multiple) {
+     $blank = ($vocabulary->required) ? t('- Please choose -') : t('- None selected -');
+@@ -514,7 +514,7 @@ function taxonomy_form_alter(&$form, $form_state, $form_id) {
+           $typed_string = taxonomy_implode_tags($terms, $vocabulary->vid) . (array_key_exists('tags', $terms) ? $terms['tags'][$vocabulary->vid] : NULL);
+         }
+         if ($vocabulary->help) {
+-          $help = $vocabulary->help;
++          $help = filter_xss_admin($vocabulary->help);
+         }
+         else {
+           $help = t('A comma-separated list of terms describing this content. Example: funny, bungee jumping, "Company, Inc.".');
+@@ -538,7 +538,7 @@ function taxonomy_form_alter(&$form, $form_state, $form_id) {
+             $default_terms[$term->tid] = $term;
+           }
+         }
+-        $form['taxonomy'][$vocabulary->vid] = taxonomy_form($vocabulary->vid, array_keys($default_terms), $vocabulary->help);
++        $form['taxonomy'][$vocabulary->vid] = taxonomy_form($vocabulary->vid, array_keys($default_terms), filter_xss_admin($vocabulary->help));
+         $form['taxonomy'][$vocabulary->vid]['#weight'] = $vocabulary->weight;
+         $form['taxonomy'][$vocabulary->vid]['#required'] = $vocabulary->required;
+       }
+@@ -838,19 +838,16 @@ function taxonomy_get_tree($vid, $parent = 0, $depth = -1, $max_depth = NULL) {
+ 
+   $max_depth = (is_null($max_depth)) ? count($children[$vid]) : $max_depth;
+   $tree = array();
+-  if (!empty($children[$vid][$parent])) {
++  if ($max_depth > $depth && !empty($children[$vid][$parent])) {
+     foreach ($children[$vid][$parent] as $child) {
+-      if ($max_depth > $depth) {
+-        $term = drupal_clone($terms[$vid][$child]);
+-        $term->depth = $depth;
+-        // The "parent" attribute is not useful, as it would show one parent only.
+-        unset($term->parent);
+-        $term->parents = $parents[$vid][$child];
+-        $tree[] = $term;
+-
+-        if (!empty($children[$vid][$child])) {
+-          $tree = array_merge($tree, taxonomy_get_tree($vid, $child, $depth, $max_depth));
+-        }
++      $term = drupal_clone($terms[$vid][$child]);
++      $term->depth = $depth;
++      // The "parent" attribute is not useful, as it would show one parent only.
++      unset($term->parent);
++      $term->parents = $parents[$vid][$child];
++      $tree[] = $term;
++      if (!empty($children[$vid][$child])) {
++        $tree = array_merge($tree, taxonomy_get_tree($vid, $child, $depth, $max_depth));
+       }
+     }
+   }
+@@ -1018,6 +1015,35 @@ function taxonomy_get_term($tid) {
+   return $terms[$tid];
+ }
+ 
++/**
++ * Create a select form element for a given taxonomy vocabulary.
++ *
++ * NOTE: This function expects input that has already been sanitized and is
++ * safe for display. Callers must properly sanitize the $title and
++ * $description arguments to prevent XSS vulnerabilities.
++ *
++ * @param $title
++ *   The title of the vocabulary. This MUST be sanitized by the caller.
++ * @param $name
++ *   Ignored.
++ * @param $value
++ *   The currently selected terms from this vocabulary, if any.
++ * @param $vocabulary_id
++ *   The vocabulary ID to build the form element for.
++ * @param $description
++ *   Help text for the form element. This MUST be sanitized by the caller.
++ * @param $multiple
++ *   Boolean to control if the form should use a single or multiple select.
++ * @param $blank
++ *   Optional form choice to use when no value has been selected.
++ * @param $exclude
++ *   Optional array of term ids to exclude in the selector.
++ * @return
++ *   A FAPI form array to select terms from the given vocabulary.
++ *
++ * @see taxonomy_form()
++ * @see taxonomy_form_term()
++ */
+ function _taxonomy_term_select($title, $name, $value, $vocabulary_id, $description, $multiple, $blank, $exclude = array()) {
+   $tree = taxonomy_get_tree($vocabulary_id);
+   $options = array();
+diff --git a/modules/update/update.module b/modules/update/update.module
+index 73d6c04..98590b7 100644
+--- a/modules/update/update.module
++++ b/modules/update/update.module
+@@ -303,7 +303,7 @@ function update_cron() {
+  * @see update_invalidate_cache()
+  */
+ function update_form_alter(&$form, $form_state, $form_id) {
+-  if ($form_id == 'system_modules' || $form_id == 'system_themes' ) {
++  if ($form_id == 'system_modules' || $form_id == 'system_themes_form' ) {
+     $form['#submit'][] = 'update_invalidate_cache';
+   }
+ }

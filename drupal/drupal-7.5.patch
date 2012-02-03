@@ -1,0 +1,124 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index c859f02..3f953ce 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,8 @@
+ 
++Drupal 7.5, 2011-07-27
++----------------------
++- Fixed security issue (Access bypass), see SA-CORE-2011-003.
++
+ Drupal 7.4, 2011-06-29
+ ----------------------
+ - Rolled back patch that caused fatal errors in CTools, Feeds, and other modules using the class registry.
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index 35a20c8..f54ce92 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -8,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '7.4');
++define('VERSION', '7.5');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/comment/comment.module b/modules/comment/comment.module
+index 8d0c3d3..9c31f44 100644
+--- a/modules/comment/comment.module
++++ b/modules/comment/comment.module
+@@ -2681,6 +2681,10 @@ function comment_rdf_mapping() {
+  */
+ function comment_file_download_access($field, $entity_type, $entity) {
+   if ($entity_type == 'comment') {
+-    return user_access('access comments') && $entity->status == COMMENT_PUBLISHED || user_access('administer comments');
++    if (user_access('access comments') && $entity->status == COMMENT_PUBLISHED || user_access('administer comments')) {
++      $node = node_load($entity->nid);
++      return node_access('view', $node);
++    }
++    return FALSE;
+   }
+ }
+diff --git a/modules/file/tests/file.test b/modules/file/tests/file.test
+index ea8c5c6..044c6f6 100644
+--- a/modules/file/tests/file.test
++++ b/modules/file/tests/file.test
+@@ -530,6 +530,7 @@ class FileFieldWidgetTestCase extends FileFieldTestCase {
+       'title' => $this->randomName(),
+     );
+     $this->drupalPost('node/add/article', $edit, t('Save'));
++    $node = $this->drupalGetNodeByTitle($edit['title']);
+ 
+     // Add a comment with a file.
+     $text_file = $this->getTestFile('text');
+@@ -559,6 +560,18 @@ class FileFieldWidgetTestCase extends FileFieldTestCase {
+     $this->drupalLogout();
+     $this->drupalGet(file_create_url($comment_file->uri));
+     $this->assertResponse(403, t('Confirmed that access is denied for the file without the needed permission.'));
++
++    // Unpublishes node.
++    $this->drupalLogin($this->admin_user);
++    $edit = array(
++      'status' => FALSE,
++    );
++    $this->drupalPost('node/' . $node->nid . '/edit', $edit, t('Save'));
++
++    // Ensures normal user can no longer download the file.
++    $this->drupalLogin($user);
++    $this->drupalGet(file_create_url($comment_file->uri));
++    $this->assertResponse(403, t('Confirmed that access is denied for the file without the needed permission.'));
+   }
+ 
+ }
+diff --git a/modules/node/tests/node_access_test.install b/modules/node/tests/node_access_test.install
+index 3535ab1..1f33d51 100644
+--- a/modules/node/tests/node_access_test.install
++++ b/modules/node/tests/node_access_test.install
+@@ -40,45 +40,3 @@ function node_access_test_schema() {
+ 
+   return $schema;
+ }
+-<?php
+-
+-/**
+- * @file
+- * Install, update and uninstall functions for the node_access_test module.
+- */
+-
+-/**
+- * Implements hook_schema().
+- */
+-function node_access_test_schema() {
+-  $schema['node_access_test'] = array(
+-    'description' => 'The base table for node_access_test.',
+-    'fields' => array(
+-      'nid' => array(
+-        'description' => 'The {node}.nid this record affects.',
+-        'type' => 'int',
+-        'unsigned' => TRUE,
+-        'not null' => TRUE,
+-        'default' => 0,
+-      ),
+-      'private' => array(
+-        'description' => 'Boolean indicating whether the node is private (visible to administrator) or not (visible to non-administrators).',
+-        'type' => 'int',
+-        'not null' => TRUE,
+-        'default' => 0,
+-      ),
+-    ),
+-    'indexes' => array(
+-      'nid' => array('nid'),
+-    ),
+-    'primary key' => array('nid'),
+-    'foreign keys' => array(
+-      'versioned_node' => array(
+-        'table' => 'node',
+-        'columns' => array('nid' => 'nid'),
+-      ),
+-    ),
+-  );
+-
+-  return $schema;
+-}
+\ No newline at end of file
