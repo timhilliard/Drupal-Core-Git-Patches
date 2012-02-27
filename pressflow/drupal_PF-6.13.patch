@@ -1,0 +1,1692 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 99e4e54..8a24504 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,10 @@
+-// $Id: CHANGELOG.txt,v 1.253.2.29 2009/05/13 19:11:04 goba Exp $
++// $Id: CHANGELOG.txt,v 1.253.2.31 2009/07/01 20:51:55 goba Exp $
++
++Drupal 6.13, 2009-07-01
++----------------------
++- Fixed security issues (Cross site scripting, Input format access bypass and
++  Password leakage in URL), see SA-CORE-2009-007.
++- Fixed a variety of small bugs.
+ 
+ Drupal 6.12, 2009-05-13
+ ----------------------
+@@ -186,6 +192,11 @@ Drupal 6.0, 2008-02-13
+ - Removed old system updates. Updates from Drupal versions prior to 5.x will
+   require upgrading to 5.x before upgrading to 6.x.
+ 
++Drupal 5.19, 2009-07-01
++-----------------------
++- Fixed security issues (Cross site scripting and Password leakage in URL), see SA-CORE-2009-007.
++- Fixed a variety of small bugs.
++
+ Drupal 5.18, 2009-05-13
+ ----------------------
+ - Fixed security issues (Cross site scripting), see SA-CORE-2009-006.
+diff --git a/includes/cache.inc b/includes/cache.inc
+index 50faf6d..ab6fd1f 100644
+--- a/includes/cache.inc
++++ b/includes/cache.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: cache.inc,v 1.17.2.1 2009/04/27 14:23:58 goba Exp $
++// $Id: cache.inc,v 1.17.2.2 2009/05/26 08:10:33 goba Exp $
+ 
+ /**
+  * Return data from the persistent cache. Data may be stored as either plain text or as serialized data.
+@@ -155,7 +155,7 @@ function cache_clear_all($cid = NULL, $table = NULL, $wildcard = FALSE) {
+         variable_set('cache_flush_'. $table, time());
+       }
+       else if (time() > ($cache_flush + variable_get('cache_lifetime', 0))) {
+-        // Clear the cache for everyone, cache_flush_delay seconds have
++        // Clear the cache for everyone, cache_lifetime seconds have
+         // passed since the first request to clear the cache.
+         db_query("DELETE FROM {". $table ."} WHERE expire != %d AND expire < %d", CACHE_PERMANENT, time());
+         variable_set('cache_flush_'. $table, 0);
+diff --git a/includes/common.inc b/includes/common.inc
+index d86009b..6f56d9b 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: common.inc,v 1.756.2.52 2009/05/13 19:11:04 goba Exp $
++// $Id: common.inc,v 1.756.2.57 2009/07/01 20:51:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -483,6 +483,16 @@ function drupal_http_request($url, $headers = array(), $method = 'GET', $data =
+     $defaults['Authorization'] = 'Authorization: Basic '. base64_encode($uri['user'] . (!empty($uri['pass']) ? ":". $uri['pass'] : ''));
+   }
+ 
++  // If the database prefix is being used by SimpleTest to run the tests in a copied
++  // database then set the user-agent header to the database prefix so that any
++  // calls to other Drupal pages will run the SimpleTest prefixed database. The
++  // user-agent is used to ensure that multiple testing sessions running at the
++  // same time won't interfere with each other as they would if the database
++  // prefix were stored statically in a file or database variable.
++  if (preg_match("/simpletest\d+/", $GLOBALS['db_prefix'], $matches)) {
++    $defaults['User-Agent'] = 'User-Agent: ' . $matches[0];
++  }
++
+   foreach ($headers as $header => $value) {
+     $defaults[$header] = $header .': '. $value;
+   }
+@@ -1846,7 +1856,9 @@ function drupal_get_css($css = NULL) {
+     }
+ 
+     if ($is_writable && $preprocess_css) {
+-      $filename = md5(serialize($types) . $query_string) .'.css';
++      // Prefix filename to prevent blocking by firewalls which reject files
++      // starting with "ad*".
++      $filename = 'css_'. md5(serialize($types) . $query_string) .'.css';
+       $preprocess_file = drupal_build_css_cache($types, $filename);
+       $output .= '<link type="text/css" rel="stylesheet" media="'. $media .'" href="'. base_path() . $preprocess_file .'" />'."\n";
+     }
+@@ -2194,7 +2206,9 @@ function drupal_get_js($scope = 'header', $javascript = NULL) {
+ 
+   // Aggregate any remaining JS files that haven't already been output.
+   if ($is_writable && $preprocess_js && count($files) > 0) {
+-    $filename = md5(serialize($files) . $query_string) .'.js';
++    // Prefix filename to prevent blocking by firewalls which reject files
++    // starting with "ad*".
++    $filename = 'js_'. md5(serialize($files) . $query_string) .'.js';
+     $preprocess_file = drupal_build_js_cache($files, $filename);
+     $preprocessed .= '<script type="text/javascript" src="'. base_path() . $preprocess_file .'"></script>'."\n";
+   }
+@@ -3669,7 +3683,8 @@ function drupal_flush_all_caches() {
+ function _drupal_flush_css_js() {
+   $string_history = variable_get('css_js_query_string', '00000000000000000000');
+   $new_character = $string_history[0];
+-  $characters = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
++  // Not including 'q' to allow certain JavaScripts to re-use query string.
++  $characters = 'abcdefghijklmnoprstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+   while (strpos($string_history, $new_character) !== FALSE) {
+     $new_character = $characters[mt_rand(0, strlen($characters) - 1)];
+   }
+diff --git a/includes/database.inc b/includes/database.inc
+index 5e70c2d..aa0ea0e 100644
+--- a/includes/database.inc
++++ b/includes/database.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: database.inc,v 1.92.2.4 2009/02/16 14:41:58 goba Exp $
++// $Id: database.inc,v 1.92.2.5 2009/06/09 10:42:02 goba Exp $
+ 
+ /**
+  * @file
+@@ -427,6 +427,8 @@ function db_escape_table($string) {
+  *       just map to the according database engine specific
+  *       datatypes.  Use 'serial' for auto incrementing fields. This
+  *       will expand to 'int auto_increment' on mysql.
++ *     - 'serialize': A boolean indicating whether the field will be stored
++         as a serialized string.
+  *     - 'size': The data size: 'tiny', 'small', 'medium', 'normal',
+  *       'big'.  This is a hint about the largest value the field will
+  *       store and determines which of the database engine specific
+diff --git a/includes/database.pgsql.inc b/includes/database.pgsql.inc
+index 93b2d31..f80911e 100644
+--- a/includes/database.pgsql.inc
++++ b/includes/database.pgsql.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: database.pgsql.inc,v 1.68.2.4 2009/03/30 13:04:06 goba Exp $
++// $Id: database.pgsql.inc,v 1.68.2.5 2009/06/09 10:53:52 goba Exp $
+ 
+ /**
+  * @file
+@@ -910,9 +910,20 @@ function db_change_field(&$ret, $table, $field, $field_new, $spec, $new_keys = a
+   $not_null = isset($spec['not null']) ? $spec['not null'] : FALSE;
+   unset($spec['not null']);
+ 
++  if (!array_key_exists('size', $spec)) {
++    $spec['size'] = 'normal';
++  }
+   db_add_field($ret, $table, "$field_new", $spec);
+ 
+-  $ret[] = update_sql("UPDATE {". $table ."} SET $field_new = ". $field ."_old");
++  // We need to type cast the new column to best transfer the data
++  // db_type_map will return possiblities that are not 'cast-able'
++  // such as serial - they must be made 'int' instead.
++  $map =  db_type_map();
++  $typecast = $map[$spec['type'] .':'. $spec['size']];
++  if (in_array($typecast, array('serial', 'bigserial', 'numeric'))) {
++    $typecast = 'int';
++  }
++  $ret[] = update_sql('UPDATE {'. $table .'} SET '. $field_new .' = CAST('. $field .'_old AS '. $typecast .')');
+ 
+   if ($not_null) {
+     $ret[] = update_sql("ALTER TABLE {". $table ."} ALTER $field_new SET NOT NULL");
+diff --git a/includes/file.inc b/includes/file.inc
+index 78536c3..c64a576 100644
+--- a/includes/file.inc
++++ b/includes/file.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: file.inc,v 1.121.2.6 2009/04/13 19:07:16 dries Exp $
++// $Id: file.inc,v 1.121.2.7 2009/06/09 10:37:38 goba Exp $
+ 
+ /**
+  * @file
+@@ -640,7 +640,7 @@ function file_validate_extensions($file, $extensions) {
+  * @param $file_limit
+  *   An integer specifying the maximum file size in bytes. Zero indicates that
+  *   no limit should be enforced.
+- * @param $$user_limit
++ * @param $user_limit
+  *   An integer specifying the maximum number of bytes the user is allowed. Zero
+  *   indicates that no limit should be enforced.
+  * @return
+@@ -657,8 +657,8 @@ function file_validate_size($file, $file_limit = 0, $user_limit = 0) {
+       $errors[] = t('The file is %filesize exceeding the maximum file size of %maxsize.', array('%filesize' => format_size($file->filesize), '%maxsize' => format_size($file_limit)));
+     }
+ 
+-    $total_size = file_space_used($user->uid) + $file->filesize;
+-    if ($user_limit && $total_size > $user_limit) {
++    // Save a query by only calling file_space_used() when a limit is provided.
++    if ($user_limit && (file_space_used($user->uid) + $file->filesize) > $user_limit) {
+       $errors[] = t('The file is %filesize which would exceed your disk quota of %quota.', array('%filesize' => format_size($file->filesize), '%quota' => format_size($user_limit)));
+     }
+   }
+diff --git a/includes/form.inc b/includes/form.inc
+index 62568cc..be9da38 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: form.inc,v 1.265.2.24 2009/05/13 18:22:29 goba Exp $
++// $Id: form.inc,v 1.265.2.25 2009/05/26 08:18:46 goba Exp $
+ 
+ /**
+  * @defgroup forms Form builder functions
+@@ -1624,7 +1624,7 @@ function password_confirm_validate($form, &$form_state) {
+   $pass1 = trim($form['pass1']['#value']);
+   if (!empty($pass1)) {
+     $pass2 = trim($form['pass2']['#value']);
+-    if ($pass1 != $pass2) {
++    if (strcmp($pass1, $pass2)) {
+       form_error($form, t('The specified passwords do not match.'));
+     }
+   }
+diff --git a/includes/locale.inc b/includes/locale.inc
+index 64fc8d0..62e8840 100644
+--- a/includes/locale.inc
++++ b/includes/locale.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: locale.inc,v 1.174.2.8 2009/04/08 02:54:00 dries Exp $
++// $Id: locale.inc,v 1.174.2.9 2009/06/18 12:50:33 goba Exp $
+ 
+ /**
+  * @file
+@@ -847,8 +847,10 @@ function locale_string_is_safe($string) {
+  * Validate string editing form submissions.
+  */
+ function locale_translate_edit_form_validate($form, &$form_state) {
++  // Locale string check is needed for default textgroup only.
++  $safe_check_needed = $form_state['values']['textgroup'] == 'default';
+   foreach ($form_state['values']['translations'] as $key => $value) {
+-    if (!locale_string_is_safe($value)) {
++    if ($safe_check_needed && !locale_string_is_safe($value)) {
+       form_set_error('translations', t('The submitted string contains disallowed HTML: %string', array('%string' => $value)));
+       watchdog('locale', 'Attempted submission of a translation string with disallowed HTML: %string', array('%string' => $value), WATCHDOG_WARNING);
+     }
+@@ -1340,7 +1342,9 @@ function _locale_import_one_string_db(&$report, $langcode, $source, $translation
+ 
+   if (!empty($translation)) {
+      // Skip this string unless it passes a check for dangerous code.
+-     if (!locale_string_is_safe($translation)) {
++     // Text groups other than default still can contain HTML tags
++     // (i.e. translatable blocks).
++     if ($textgroup == "default" && !locale_string_is_safe($translation)) {
+        $report['skips']++;
+        $lid = 0;
+      }
+diff --git a/includes/mail.inc b/includes/mail.inc
+index 830f89b..0ead197 100644
+--- a/includes/mail.inc
++++ b/includes/mail.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: mail.inc,v 1.8.2.6 2009/04/27 11:07:43 goba Exp $
++// $Id: mail.inc,v 1.8.2.7 2009/06/18 12:15:44 goba Exp $
+ 
+ /**
+  * Compose and optionally send an e-mail message.
+@@ -45,7 +45,7 @@
+  *     switch($key) {
+  *       case 'notice':
+  *         $message['subject'] = t('Notification from !site', $variables, $language->language);
+- *         $message['body'] = t("Dear !username\n\nThere is new content available on the site.", $variables, $language->language);
++ *         $message['body'][] = t("Dear !username\n\nThere is new content available on the site.", $variables, $language->language);
+  *         break;
+  *     }
+  *   }
+diff --git a/includes/pager.inc b/includes/pager.inc
+index f88a35f..5e58f0e 100644
+--- a/includes/pager.inc
++++ b/includes/pager.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: pager.inc,v 1.63 2007/12/06 09:58:30 goba Exp $
++// $Id: pager.inc,v 1.63.2.1 2009/07/01 20:51:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -85,7 +85,7 @@ function pager_query($query, $limit = 10, $element = 0, $count_query = NULL) {
+ function pager_get_querystring() {
+   static $string = NULL;
+   if (!isset($string)) {
+-    $string = drupal_query_string_encode($_REQUEST, array_merge(array('q', 'page'), array_keys($_COOKIE)));
++    $string = drupal_query_string_encode($_REQUEST, array_merge(array('q', 'page', 'pass'), array_keys($_COOKIE)));
+   }
+   return $string;
+ }
+diff --git a/includes/tablesort.inc b/includes/tablesort.inc
+index cec37fc..e43176c 100644
+--- a/includes/tablesort.inc
++++ b/includes/tablesort.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: tablesort.inc,v 1.47 2008/01/04 09:31:48 goba Exp $
++// $Id: tablesort.inc,v 1.47.2.1 2009/07/01 20:51:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -136,7 +136,7 @@ function tablesort_cell($cell, $header, $ts, $i) {
+  *   except for those pertaining to table sorting.
+  */
+ function tablesort_get_querystring() {
+-  return drupal_query_string_encode($_REQUEST, array_merge(array('q', 'sort', 'order'), array_keys($_COOKIE)));
++  return drupal_query_string_encode($_REQUEST, array_merge(array('q', 'sort', 'order', 'pass'), array_keys($_COOKIE)));
+ }
+ 
+ /**
+diff --git a/includes/theme.inc b/includes/theme.inc
+index c836a8f..1f66e31 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: theme.inc,v 1.415.2.22 2009/05/13 19:11:04 goba Exp $
++// $Id: theme.inc,v 1.415.2.24 2009/06/18 12:04:04 goba Exp $
+ 
+ /**
+  * @file
+@@ -1632,7 +1632,7 @@ function theme_username($object) {
+     $output .= ' ('. t('not verified') .')';
+   }
+   else {
+-    $output = variable_get('anonymous', t('Anonymous'));
++    $output = check_plain(variable_get('anonymous', t('Anonymous')));
+   }
+ 
+   return $output;
+@@ -1820,8 +1820,8 @@ function template_preprocess_page(&$variables) {
+   $variables['primary_links']     = theme_get_setting('toggle_primary_links') ? menu_primary_links() : array();
+   $variables['secondary_links']   = theme_get_setting('toggle_secondary_links') ? menu_secondary_links() : array();
+   $variables['search_box']        = (theme_get_setting('toggle_search') ? drupal_get_form('search_theme_form') : '');
+-  $variables['site_name']         = (theme_get_setting('toggle_name') ? variable_get('site_name', 'Drupal') : '');
+-  $variables['site_slogan']       = (theme_get_setting('toggle_slogan') ? variable_get('site_slogan', '') : '');
++  $variables['site_name']         = (theme_get_setting('toggle_name') ? filter_xss_admin(variable_get('site_name', 'Drupal')) : '');
++  $variables['site_slogan']       = (theme_get_setting('toggle_slogan') ? filter_xss_admin(variable_get('site_slogan', '')) : '');
+   $variables['css']               = drupal_add_css();
+   $variables['styles']            = drupal_get_css();
+   $variables['scripts']           = drupal_get_js();
+diff --git a/misc/tabledrag.js b/misc/tabledrag.js
+index 7d459ec..3be8f67 100644
+--- a/misc/tabledrag.js
++++ b/misc/tabledrag.js
+@@ -1,4 +1,4 @@
+-// $Id: tabledrag.js,v 1.13.2.4 2008/09/17 07:59:39 goba Exp $
++// $Id: tabledrag.js,v 1.13.2.5 2009/06/18 12:24:24 goba Exp $
+ 
+ /**
+  * Drag and drop table rows with field manipulation.
+@@ -76,13 +76,15 @@ Drupal.tableDrag = function(table, tableSettings) {
+     // manually append 2 indentations in the first draggable row, measure
+     // the offset, then remove.
+     var indent = Drupal.theme('tableDragIndentation');
+-    var testCell = $('tr.draggable:first td:first', table).prepend(indent).prepend(indent);
++    // Match immediate children of the parent element to allow nesting.
++    var testCell = $('> tbody > tr.draggable:first td:first, > tr.draggable:first td:first', table).prepend(indent).prepend(indent);
+     this.indentAmount = $('.indentation', testCell).get(1).offsetLeft - $('.indentation', testCell).get(0).offsetLeft;
+     $('.indentation', testCell).slice(0, 2).remove();
+   }
+ 
+   // Make each applicable row draggable.
+-  $('tr.draggable', table).each(function() { self.makeDraggable(this); });
++  // Match immediate children of the parent element to allow nesting.
++  $('> tr.draggable, > tbody > tr.draggable', table).each(function() { self.makeDraggable(this); });
+ 
+   // Hide columns containing affected form elements.
+   this.hideColumns();
+@@ -112,9 +114,10 @@ Drupal.tableDrag.prototype.hideColumns = function(){
+     // Hide the column containing this field.
+     if (hidden && cell[0] && cell.css('display') != 'none') {
+       // Add 1 to our indexes. The nth-child selector is 1 based, not 0 based.
+-      var columnIndex = $('td', cell.parent()).index(cell.get(0)) + 1;
+-      var headerIndex = $('td:not(:hidden)', cell.parent()).index(cell.get(0)) + 1;
+-      $('tr', this.table).each(function(){
++      // Match immediate children of the parent element to allow nesting.
++      var columnIndex = $('> td', cell.parent()).index(cell.get(0)) + 1;
++      var headerIndex = $('> td:not(:hidden)', cell.parent()).index(cell.get(0)) + 1;
++      $('> thead > tr, > tbody > tr, > tr', this.table).each(function(){
+         var row = $(this);
+         var parentTag = row.parent().get(0).tagName.toLowerCase();
+         var index = (parentTag == 'thead') ? headerIndex : columnIndex;
+@@ -775,7 +778,8 @@ Drupal.tableDrag.prototype.setScroll = function(scrollAmount) {
+ Drupal.tableDrag.prototype.restripeTable = function() {
+   // :even and :odd are reversed because jquery counts from 0 and
+   // we count from 1, so we're out of sync.
+-  $('tr.draggable', this.table)
++  // Match immediate children of the parent element to allow nesting.
++  $('> tbody > tr.draggable, > tr.draggable', this.table)
+     .filter(':odd').filter('.odd')
+       .removeClass('odd').addClass('even')
+     .end().end()
+diff --git a/misc/teaser.js b/misc/teaser.js
+index c865788..321197f 100644
+--- a/misc/teaser.js
++++ b/misc/teaser.js
+@@ -1,4 +1,4 @@
+-// $Id: teaser.js,v 1.12 2008/01/09 12:10:04 goba Exp $
++// $Id: teaser.js,v 1.12.2.1 2009/05/20 11:50:54 goba Exp $
+ 
+ /**
+  * Auto-attach for teaser behavior.
+@@ -71,10 +71,10 @@ Drupal.behaviors.teaser = function(context) {
+     $(include).parent().parent().before(button);
+ 
+     // Extract the teaser from the body, if set. Otherwise, stay in joined mode.
+-    var text = body.val().split('<!--break-->', 2);
+-    if (text.length == 2) {
+-      teaser[0].value = trim(text[0]);
+-      body[0].value = trim(text[1]);
++    var text = body.val().split('<!--break-->');
++    if (text.length >= 2) {
++      teaser[0].value = trim(text.shift());
++      body[0].value = trim(text.join('<!--break-->'));
+       $(teaser).attr('disabled', '');
+       $('input', button).val(Drupal.t('Join summary')).toggle(join_teaser, split_teaser);
+     }
+diff --git a/modules/aggregator/aggregator.info b/modules/aggregator/aggregator.info
+index 155448e..6e4b6a2 100644
+--- a/modules/aggregator/aggregator.info
++++ b/modules/aggregator/aggregator.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/block/block.info b/modules/block/block.info
+index 1aafd2a..57c45b1 100644
+--- a/modules/block/block.info
++++ b/modules/block/block.info
+@@ -5,8 +5,8 @@ package = Core - required
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/blog/blog.info b/modules/blog/blog.info
+index 7102ea2..9841daf 100644
+--- a/modules/blog/blog.info
++++ b/modules/blog/blog.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/blogapi/blogapi.info b/modules/blogapi/blogapi.info
+index 8892c94..eda4231 100644
+--- a/modules/blogapi/blogapi.info
++++ b/modules/blogapi/blogapi.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/book/book.info b/modules/book/book.info
+index ac821e3..b90ba34 100644
+--- a/modules/book/book.info
++++ b/modules/book/book.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/color/color.info b/modules/color/color.info
+index 5f649c4..6545911 100644
+--- a/modules/color/color.info
++++ b/modules/color/color.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/color/color.module b/modules/color/color.module
+index 045fa45..993b5d0 100644
+--- a/modules/color/color.module
++++ b/modules/color/color.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: color.module,v 1.39.2.1 2009/02/25 11:47:37 goba Exp $
++// $Id: color.module,v 1.39.2.2 2009/05/16 16:09:21 dries Exp $
+ 
+ /**
+  * Implementation of hook_help().
+@@ -203,7 +203,7 @@ function color_scheme_form(&$form_state, $theme) {
+ /**
+  * Theme color form.
+  *
+- * @ingroup @themeable
++ * @ingroup themeable
+  */
+ function theme_color_scheme_form($form) {
+   // Include stylesheet
+diff --git a/modules/comment/comment.info b/modules/comment/comment.info
+index 67d5e8c..2c6c6ce 100644
+--- a/modules/comment/comment.info
++++ b/modules/comment/comment.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/comment/comment.module b/modules/comment/comment.module
+index 7e434fb..2091b99 100644
+--- a/modules/comment/comment.module
++++ b/modules/comment/comment.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: comment.module,v 1.617.2.7 2009/05/13 17:15:10 goba Exp $
++// $Id: comment.module,v 1.617.2.8 2009/07/01 20:51:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -936,7 +936,7 @@ function comment_render($node, $cid = 0) {
+ 
+     if ($cid && is_numeric($cid)) {
+       // Single comment view.
+-      $query = 'SELECT c.cid, c.pid, c.nid, c.subject, c.comment, c.format, c.timestamp, c.name, c.mail, c.homepage, u.uid, u.name AS registered_name, u.signature, u.picture, u.data, c.status FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.cid = %d';
++      $query = 'SELECT c.cid, c.pid, c.nid, c.subject, c.comment, c.format, c.timestamp, c.name, c.mail, c.homepage, u.uid, u.name AS registered_name, u.signature, u.signature_format, u.picture, u.data, c.status FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.cid = %d';
+       $query_args = array($cid);
+       if (!user_access('administer comments')) {
+         $query .= ' AND c.status = %d';
+@@ -957,7 +957,7 @@ function comment_render($node, $cid = 0) {
+     else {
+       // Multiple comment view
+       $query_count = 'SELECT COUNT(*) FROM {comments} c WHERE c.nid = %d';
+-      $query = 'SELECT c.cid as cid, c.pid, c.nid, c.subject, c.comment, c.format, c.timestamp, c.name, c.mail, c.homepage, u.uid, u.name AS registered_name, u.signature, u.picture, u.data, c.thread, c.status FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.nid = %d';
++      $query = 'SELECT c.cid as cid, c.pid, c.nid, c.subject, c.comment, c.format, c.timestamp, c.name, c.mail, c.homepage, u.uid, u.name AS registered_name, u.signature, u.signature_format, u.picture, u.data, c.thread, c.status FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.nid = %d';
+ 
+       $query_args = array($nid);
+       if (!user_access('administer comments')) {
+@@ -1468,7 +1468,7 @@ function comment_form_add_preview($form, &$form_state) {
+   $output = '';
+ 
+   if ($edit['pid']) {
+-    $comment = db_fetch_object(db_query('SELECT c.*, u.uid, u.name AS registered_name, u.signature, u.picture, u.data FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.cid = %d AND c.status = %d', $edit['pid'], COMMENT_PUBLISHED));
++    $comment = db_fetch_object(db_query('SELECT c.*, u.uid, u.name AS registered_name, u.signature, u.signature_format, u.picture, u.data FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.cid = %d AND c.status = %d', $edit['pid'], COMMENT_PUBLISHED));
+     $comment = drupal_unpack($comment);
+     $comment->name = $comment->uid ? $comment->registered_name : $comment->name;
+     $output .= theme('comment_view', $comment, $node);
+@@ -1778,14 +1778,14 @@ function theme_comment_thread_expanded($comment, $node) {
+ function theme_comment_post_forbidden($node) {
+   global $user;
+   static $authenticated_post_comments;
+-  
++
+   if (!$user->uid) {
+     if (!isset($authenticated_post_comments)) {
+       // We only output any link if we are certain, that users get permission
+       // to post comments by logging in. We also locally cache this information.
+       $authenticated_post_comments = array_key_exists(DRUPAL_AUTHENTICATED_RID, user_roles(TRUE, 'post comments') + user_roles(TRUE, 'post comments without approval'));
+     }
+-    
++
+     if ($authenticated_post_comments) {
+       // We cannot use drupal_get_destination() because these links
+       // sometimes appear on /node and taxonomy listing pages.
+diff --git a/modules/comment/comment.pages.inc b/modules/comment/comment.pages.inc
+index 32905e9..b74d7d8 100644
+--- a/modules/comment/comment.pages.inc
++++ b/modules/comment/comment.pages.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: comment.pages.inc,v 1.2.2.1 2008/02/07 18:53:38 goba Exp $
++// $Id: comment.pages.inc,v 1.2.2.2 2009/07/01 20:51:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -70,7 +70,7 @@ function comment_reply($node, $pid = NULL) {
+       // $pid indicates that this is a reply to a comment.
+       if ($pid) {
+         // load the comment whose cid = $pid
+-        if ($comment = db_fetch_object(db_query('SELECT c.*, u.uid, u.name AS registered_name, u.signature, u.picture, u.data FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.cid = %d AND c.status = %d', $pid, COMMENT_PUBLISHED))) {
++        if ($comment = db_fetch_object(db_query('SELECT c.*, u.uid, u.name AS registered_name, u.signature, u.signature_format, u.picture, u.data FROM {comments} c INNER JOIN {users} u ON c.uid = u.uid WHERE c.cid = %d AND c.status = %d', $pid, COMMENT_PUBLISHED))) {
+           // If that comment exists, make sure that the current comment and the parent comment both
+           // belong to the same parent node.
+           if ($comment->nid != $node->nid) {
+diff --git a/modules/contact/contact.info b/modules/contact/contact.info
+index 707f985..3e462ac 100644
+--- a/modules/contact/contact.info
++++ b/modules/contact/contact.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/dblog/dblog.info b/modules/dblog/dblog.info
+index e956fb3..dd99b27 100644
+--- a/modules/dblog/dblog.info
++++ b/modules/dblog/dblog.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/filter/filter.info b/modules/filter/filter.info
+index 022add5..027702a 100644
+--- a/modules/filter/filter.info
++++ b/modules/filter/filter.info
+@@ -5,8 +5,8 @@ package = Core - required
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/forum/forum.admin.inc b/modules/forum/forum.admin.inc
+index c074d7e..b0df7ee 100644
+--- a/modules/forum/forum.admin.inc
++++ b/modules/forum/forum.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: forum.admin.inc,v 1.8 2008/01/30 10:14:42 goba Exp $
++// $Id: forum.admin.inc,v 1.8.2.1 2009/05/26 08:13:00 goba Exp $
+ 
+ /**
+  * @file
+@@ -220,7 +220,6 @@ function forum_overview(&$form_state) {
+   $vid = variable_get('forum_nav_vocabulary', '');
+   $vocabulary = taxonomy_vocabulary_load($vid);
+   $form = taxonomy_overview_terms($form_state, $vocabulary);
+-  drupal_set_title('Forums');
+ 
+   foreach (element_children($form) as $key) {
+     if (isset($form[$key]['#term'])) {
+diff --git a/modules/forum/forum.info b/modules/forum/forum.info
+index 30113e5..9f39cc6 100644
+--- a/modules/forum/forum.info
++++ b/modules/forum/forum.info
+@@ -7,8 +7,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index fd650aa..57eb60e 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: forum.module,v 1.448.2.6 2009/03/30 11:09:51 goba Exp $
++// $Id: forum.module,v 1.448.2.7 2009/06/03 18:27:48 goba Exp $
+ 
+ /**
+  * @file
+@@ -679,11 +679,11 @@ function template_preprocess_forums(&$variables) {
+     if (empty($forum_types)) {
+       // The user is logged-in; but denied access to create any new forum content type.
+       if ($user->uid) {
+-        $forum_types['disallowed'] = array('title' => t('You are not allowed to post new content in forum.'));
++        $forum_types['disallowed'] = array('title' => t('You are not allowed to post new content in the forum.'));
+       }
+       // The user is not logged-in; and denied access to create any new forum content type.
+       else {
+-        $forum_types['login'] = array('title' => t('<a href="@login">Login</a> to post new content in forum.', array('@login' => url('user/login', array('query' => drupal_get_destination())))), 'html' => TRUE);
++        $forum_types['login'] = array('title' => t('<a href="@login">Login</a> to post new content in the forum.', array('@login' => url('user/login', array('query' => drupal_get_destination())))), 'html' => TRUE);
+       }
+     }
+     $variables['links'] = $forum_types;
+diff --git a/modules/forum/forum.pages.inc b/modules/forum/forum.pages.inc
+index b4138cf..6d7db19 100644
+--- a/modules/forum/forum.pages.inc
++++ b/modules/forum/forum.pages.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: forum.pages.inc,v 1.2 2007/07/26 06:48:03 dries Exp $
++// $Id: forum.pages.inc,v 1.2.2.1 2009/07/01 20:51:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -10,6 +10,11 @@
+  * Menu callback; prints a forum listing.
+  */
+ function forum_page($tid = 0) {
++  if (!is_numeric($tid)) {
++    return MENU_NOT_FOUND;
++  }
++  $tid = (int)$tid;
++
+   $topics = '';
+   $forum_per_page = variable_get('forum_per_page', 25);
+   $sortby = variable_get('forum_order', 1);
+diff --git a/modules/help/help.info b/modules/help/help.info
+index a4714a5..96bec38 100644
+--- a/modules/help/help.info
++++ b/modules/help/help.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/locale/locale.info b/modules/locale/locale.info
+index 5932d3c..68c3ce0 100644
+--- a/modules/locale/locale.info
++++ b/modules/locale/locale.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/menu/menu.info b/modules/menu/menu.info
+index 6746e8c..e24dcaa 100644
+--- a/modules/menu/menu.info
++++ b/modules/menu/menu.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/node/node.admin.inc b/modules/node/node.admin.inc
+index 50db45e..5782fdd 100644
+--- a/modules/node/node.admin.inc
++++ b/modules/node/node.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: node.admin.inc,v 1.19.2.2 2008/11/10 10:31:06 goba Exp $
++// $Id: node.admin.inc,v 1.19.2.3 2009/06/08 16:45:34 goba Exp $
+ 
+ /**
+  * @file
+@@ -10,24 +10,19 @@
+  * Menu callback; presents general node configuration options.
+  */
+ function node_configure() {
+-  // Only show rebuild button if there are either 0, or 2 or more, rows
+-  // in the {node_access} table, or if there are modules that
+-  // implement hook_node_grants().
+-  if (db_result(db_query('SELECT COUNT(*) FROM {node_access}')) != 1 || count(module_implements('node_grants')) > 0) {
+-    $status = '<p>'. t('If the site is experiencing problems with permissions to content, you may have to rebuild the permissions cache. Possible causes for permission problems are disabling modules or configuration changes to permissions. Rebuilding will remove all privileges to posts, and replace them with permissions based on the current modules and settings.') .'</p>';
+-    $status .= '<p>'. t('Rebuilding may take some time if there is a lot of content or complex permission settings. After rebuilding has completed posts will automatically use the new permissions.') .'</p>';
+-
+-    $form['access'] = array(
+-      '#type' => 'fieldset',
+-      '#title' => t('Node access status'),
+-    );
+-    $form['access']['status'] = array('#value' => $status);
+-    $form['access']['rebuild'] = array(
+-      '#type' => 'submit',
+-      '#value' => t('Rebuild permissions'),
+-      '#submit' => array('node_configure_access_submit'),
+-    );
+-  }
++  $status = '<p>'. t('If the site is experiencing problems with permissions to content, you may have to rebuild the permissions cache. Possible causes for permission problems are disabling modules or configuration changes to permissions. Rebuilding will remove all privileges to posts, and replace them with permissions based on the current modules and settings.') .'</p>';
++  $status .= '<p>'. t('Rebuilding may take some time if there is a lot of content or complex permission settings. After rebuilding has completed posts will automatically use the new permissions.') .'</p>';
++
++  $form['access'] = array(
++    '#type' => 'fieldset',
++    '#title' => t('Node access status'),
++  );
++  $form['access']['status'] = array('#value' => $status);
++  $form['access']['rebuild'] = array(
++    '#type' => 'submit',
++    '#value' => t('Rebuild permissions'),
++    '#submit' => array('node_configure_access_submit'),
++  );
+ 
+   $form['default_nodes_main'] = array(
+     '#type' => 'select', '#title' => t('Number of posts on main page'), '#default_value' => variable_get('default_nodes_main', 10),
+diff --git a/modules/node/node.info b/modules/node/node.info
+index 0aeeb8d..078fa6d 100644
+--- a/modules/node/node.info
++++ b/modules/node/node.info
+@@ -5,8 +5,8 @@ package = Core - required
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/openid/openid.info b/modules/openid/openid.info
+index 572ca60..1bef2dc 100644
+--- a/modules/openid/openid.info
++++ b/modules/openid/openid.info
+@@ -5,8 +5,8 @@ version = VERSION
+ package = Core - optional
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/openid/openid.module b/modules/openid/openid.module
+index 4d84c55..235173a 100644
+--- a/modules/openid/openid.module
++++ b/modules/openid/openid.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: openid.module,v 1.19.2.5 2009/03/30 11:36:47 goba Exp $
++// $Id: openid.module,v 1.19.2.6 2009/06/10 14:05:23 goba Exp $
+ 
+ /**
+  * @file
+@@ -44,8 +44,8 @@ function openid_menu() {
+ function openid_help($path, $arg) {
+   switch ($path) {
+     case 'user/%/openid':
+-      $output = '<p>'. t('This site supports <a href="@openid-net">OpenID</a>, a secure way to log into many websites using a single username and password. OpenID can reduce the necessity of managing many usernames and passwords for many websites.', array('@openid-net' => url('http://openid.net'))) .'</p>';
+-      $output .= '<p>'. t('To use OpenID you must first establish an identity on a public or private OpenID server. If you do not have an OpenID and would like one, look into one of the <a href="@openid-providers">free public providers</a>. You can find out more about OpenID at <a href="@openid-net">this website</a>.', array('@openid-providers' => url('http://openid.net/wiki/index.php/OpenIDServers'), '@openid-net' => url('http://openid.net'))) .'</p>';
++      $output = '<p>'. t('This site supports <a href="@openid-net">OpenID</a>, a secure way to log into many websites using a single username and password. OpenID can reduce the necessity of managing many usernames and passwords for many websites.', array('@openid-net' => 'http://openid.net')) .'</p>';
++      $output .= '<p>'. t('To use OpenID you must first establish an identity on a public or private OpenID server. If you do not have an OpenID and would like one, look into one of the <a href="@openid-providers">free public providers</a>. You can find out more about OpenID at <a href="@openid-net">this website</a>.', array('@openid-providers' => 'http://openid.net/get/', '@openid-net' => 'http://openid.net')) .'</p>';
+       $output .= '<p>'. t('If you already have an OpenID, enter the URL to your OpenID server below (e.g. myusername.openidprovider.com). Next time you login, you will be able to use this URL instead of a regular username and password. You can have multiple OpenID servers if you like; just keep adding them here.') .'</p>';
+       return $output;
+ 
+diff --git a/modules/path/path.info b/modules/path/path.info
+index 4cc8d6f..583a3c6 100644
+--- a/modules/path/path.info
++++ b/modules/path/path.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/php/php.info b/modules/php/php.info
+index c92951e..7030091 100644
+--- a/modules/php/php.info
++++ b/modules/php/php.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/ping/ping.info b/modules/ping/ping.info
+index bda74d9..1b6fb75 100644
+--- a/modules/ping/ping.info
++++ b/modules/ping/ping.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/poll/poll.info b/modules/poll/poll.info
+index 58afc58..5940d1f 100644
+--- a/modules/poll/poll.info
++++ b/modules/poll/poll.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/profile/profile.info b/modules/profile/profile.info
+index e4fc88d..526f1d4 100644
+--- a/modules/profile/profile.info
++++ b/modules/profile/profile.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/search/search.info b/modules/search/search.info
+index 036a2f7..76a8b6e 100644
+--- a/modules/search/search.info
++++ b/modules/search/search.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/statistics/statistics.info b/modules/statistics/statistics.info
+index 9296d5c..0ef7313 100644
+--- a/modules/statistics/statistics.info
++++ b/modules/statistics/statistics.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/syslog/syslog.info b/modules/syslog/syslog.info
+index c41ac8e..1404dec 100644
+--- a/modules/syslog/syslog.info
++++ b/modules/syslog/syslog.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index 8524efd..e5919e5 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.admin.inc,v 1.63.2.7 2009/02/25 11:38:41 goba Exp $
++// $Id: system.admin.inc,v 1.63.2.8 2009/06/09 10:58:09 goba Exp $
+ 
+ /**
+  * @file
+@@ -1357,7 +1357,7 @@ function system_performance_settings() {
+  *
+  * @ingroup forms
+  */
+-function system_clear_cache_submit(&$form_state, $form) {
++function system_clear_cache_submit($form, &$form_state) {
+   drupal_flush_all_caches();
+   drupal_set_message(t('Caches cleared.'));
+ }
+diff --git a/modules/system/system.info b/modules/system/system.info
+index fbb25b7..bd54e92 100644
+--- a/modules/system/system.info
++++ b/modules/system/system.info
+@@ -5,8 +5,8 @@ package = Core - required
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/system/system.install b/modules/system/system.install
+index 91dbc1a..f6b1e23 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.install,v 1.238.2.14 2009/04/27 12:50:13 goba Exp $
++// $Id: system.install,v 1.238.2.15 2009/07/01 20:51:56 goba Exp $
+ 
+ /**
+  * Test and report Drupal installation requirements.
+@@ -2565,6 +2565,39 @@ function system_update_6050() {
+ }
+ 
+ /**
++ * Create a signature_format column.
++ */
++function system_update_6051() {
++  $ret = array();
++
++  if (!db_column_exists('users', 'signature_format')) {
++
++    // Set future input formats to FILTER_FORMAT_DEFAULT to ensure a safe default
++    // when incompatible modules insert into the users table. An actual format
++    // will be assigned when users save their signature.
++
++    $schema = array(
++      'type' => 'int',
++      'size' => 'small',
++      'not null' => TRUE,
++      'default' => FILTER_FORMAT_DEFAULT,
++      'description' => 'The {filter_formats}.format of the signature.',
++    );
++
++    db_add_field($ret, 'users', 'signature_format', $schema);
++
++    // Set the format of existing signatures to the current default input format.
++    if ($current_default_filter = variable_get('filter_default_format', 0)) {
++      $ret[] = update_sql("UPDATE {users} SET signature_format = ". $current_default_filter);
++    }
++
++    drupal_set_message("User signatures no longer inherit comment input formats. Each user's signature now has its own associated format that can be selected on the user's account page. Existing signatures have been set to your site's default input format.");
++  }
++
++  return $ret;
++}
++
++/**
+  * @} End of "defgroup updates-6.x-extra"
+  * The next series of updates should start at 7000.
+  */
+diff --git a/modules/system/system.module b/modules/system/system.module
+index 4e8619f..08dc4de 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.module,v 1.585.2.36 2009/05/13 19:11:04 goba Exp $
++// $Id: system.module,v 1.585.2.38 2009/07/01 20:51:56 goba Exp $
+ 
+ /**
+  * @file
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.12');
++define('VERSION', '6.13');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/taxonomy/taxonomy.info b/modules/taxonomy/taxonomy.info
+index 78db430..8d26dec 100644
+--- a/modules/taxonomy/taxonomy.info
++++ b/modules/taxonomy/taxonomy.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/throttle/throttle.info b/modules/throttle/throttle.info
+index 563a3d4..b334cd9 100644
+--- a/modules/throttle/throttle.info
++++ b/modules/throttle/throttle.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/tracker/tracker.info b/modules/tracker/tracker.info
+index 39016fd..9174a8b 100644
+--- a/modules/tracker/tracker.info
++++ b/modules/tracker/tracker.info
+@@ -6,8 +6,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/translation/translation.info b/modules/translation/translation.info
+index 51e1961..06de45a 100644
+--- a/modules/translation/translation.info
++++ b/modules/translation/translation.info
+@@ -6,8 +6,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/trigger/trigger.info b/modules/trigger/trigger.info
+index 2e5b8b4..7540100 100644
+--- a/modules/trigger/trigger.info
++++ b/modules/trigger/trigger.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/trigger/trigger.module b/modules/trigger/trigger.module
+index 718a991..e913a9d 100644
+--- a/modules/trigger/trigger.module
++++ b/modules/trigger/trigger.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: trigger.module,v 1.13.2.2 2009/03/30 11:53:09 goba Exp $
++// $Id: trigger.module,v 1.13.2.3 2009/06/08 16:34:57 goba Exp $
+ 
+ /**
+  * @file
+@@ -313,10 +313,10 @@ function trigger_comment($a1, $op) {
+  * Implementation of hook_cron().
+  */
+ function trigger_cron() {
+-  $aids = _trigger_get_hook_aids('cron');
++  $aids = _trigger_get_hook_aids('cron', 'run');
+   $context = array(
+     'hook' => 'cron',
+-    'op' => '',
++    'op' => 'run',
+   );
+   // Cron does not act on any specific object.
+   $object = NULL;
+diff --git a/modules/update/update.compare.inc b/modules/update/update.compare.inc
+index ce7aa2f..8c99b7a 100644
+--- a/modules/update/update.compare.inc
++++ b/modules/update/update.compare.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: update.compare.inc,v 1.8.2.3 2009/04/29 18:43:11 goba Exp $
++// $Id: update.compare.inc,v 1.8.2.5 2009/06/09 11:08:32 goba Exp $
+ 
+ /**
+  * @file
+@@ -38,6 +38,8 @@ function update_get_projects() {
+       // Still empty, so we have to rebuild the cache.
+       _update_process_info_list($projects, module_rebuild_cache(), 'module');
+       _update_process_info_list($projects, system_theme_data(), 'theme');
++      // Allow other modules to alter projects before fetching and comparing.
++      drupal_alter('update_projects', $projects);
+       // Cache the site's project data for at most 1 hour.
+       _update_cache_set('update_project_projects', $projects, time() + 3600);
+     }
+@@ -301,6 +303,11 @@ function update_calculate_project_data($available) {
+               'data' => t('This project is no longer supported, and is no longer available for download. Disabling everything included by this project is strongly recommended!'),
+             );
+             break;
++          case 'not-fetched':
++            $projects[$project]['status'] = UPDATE_NOT_FETCHED;
++            $projects[$project]['reason'] = t('Failed to fetch available update data');
++            break;
++
+           default:
+             // Assume anything else (e.g. 'published') is valid and we should
+             // perform the rest of the logic in this function.
+diff --git a/modules/update/update.fetch.inc b/modules/update/update.fetch.inc
+index 22db6e8..bd60e80 100644
+--- a/modules/update/update.fetch.inc
++++ b/modules/update/update.fetch.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: update.fetch.inc,v 1.7.2.4 2009/04/29 18:43:11 goba Exp $
++// $Id: update.fetch.inc,v 1.7.2.6 2009/06/09 11:08:32 goba Exp $
+ 
+ /**
+  * @file
+@@ -11,7 +11,7 @@
+  */
+ function update_manual_status() {
+   if (_update_refresh()) {
+-    drupal_set_message(t('Fetched information about all available new releases and updates.'));
++    drupal_set_message(t('Attempted to fetch information about all available new releases and updates.'));
+   }
+   else {
+     drupal_set_message(t('Unable to fetch any information about available new releases and updates.'), 'error');
+@@ -23,6 +23,7 @@ function update_manual_status() {
+  * Fetch project info via XML from a central server.
+  */
+ function _update_refresh() {
++  static $fail = array();
+   global $base_url;
+   module_load_include('inc', 'update', 'update.compare');
+ 
+@@ -44,12 +45,24 @@ function _update_refresh() {
+   // available release data, since even if we fail to fetch new data, we need
+   // to clear out the stale data at this point.
+   _update_cache_clear('update_available_releases');
++  $max_fetch_attempts = variable_get('update_max_fetch_attempts', UPDATE_MAX_FETCH_ATTEMPTS);
+   
+   foreach ($projects as $key => $project) {
+     $url = _update_build_fetch_url($project, $site_key);
+-    $xml = drupal_http_request($url);
+-    if (isset($xml->data)) {
+-      $data[] = $xml->data;
++    $fetch_url_base = _update_get_fetch_url_base($project);
++    if (empty($fail[$fetch_url_base]) || count($fail[$fetch_url_base]) < $max_fetch_attempts) {
++      $xml = drupal_http_request($url);
++      if (isset($xml->data)) {
++        $data[] = $xml->data;
++      }
++      else {
++        // Connection likely broken; prepare to give up.
++        $fail[$fetch_url_base][$key] = 1;
++      }
++    }
++    else {
++      // Didn't bother trying to fetch.
++      $fail[$fetch_url_base][$key] = 1;
+     }
+   }
+ 
+@@ -58,14 +71,21 @@ function _update_refresh() {
+     $available = $parser->parse($data);
+   }
+   if (!empty($available) && is_array($available)) {
++    // Record the projects where we failed to fetch data.
++    foreach ($fail as $fetch_url_base => $failures) {
++      foreach ($failures as $key => $value) {
++        $available[$key]['project_status'] = 'not-fetched';
++      }
++    }
+     $frequency = variable_get('update_check_frequency', 1);
+     _update_cache_set('update_available_releases', $available, time() + (60 * 60 * 24 * $frequency));
+-    variable_set('update_last_check', time());
+-    watchdog('update', 'Fetched information about all available new releases and updates.', array(), WATCHDOG_NOTICE, l(t('view'), 'admin/reports/updates'));
++    watchdog('update', 'Attempted to fetch information about all available new releases and updates.', array(), WATCHDOG_NOTICE, l(t('view'), 'admin/reports/updates'));
+   }
+   else {
+     watchdog('update', 'Unable to fetch any information about available new releases and updates.', array(), WATCHDOG_ERROR, l(t('view'), 'admin/reports/updates'));
+   }
++  // Whether this worked or not, we did just (try to) check for updates.
++  variable_set('update_last_check', time());
+   return $available;
+ }
+ 
+@@ -85,14 +105,13 @@ function _update_refresh() {
+  * @see update_get_projects()
+  */
+ function _update_build_fetch_url($project, $site_key = '') {
+-  $default_url = variable_get('update_fetch_url', UPDATE_DEFAULT_URL);
+-  if (!isset($project['info']['project status url'])) {
+-    $project['info']['project status url'] = $default_url;
+-  }
+   $name = $project['name'];
+-  $url = $project['info']['project status url'];
++  $url = _update_get_fetch_url_base($project);
+   $url .= '/'. $name .'/'. DRUPAL_CORE_COMPATIBILITY;
+-  if (!empty($site_key)) {
++  // Only append a site_key and the version information if we have a site_key
++  // in the first place, and if this is not a disabled module or theme. We do
++  // not want to record usage statistics for disabled code.
++  if (!empty($site_key) && (strpos($project['project_type'], 'disabled') === FALSE)) {
+     $url .= (strpos($url, '?') === TRUE) ? '&' : '?';
+     $url .= 'site_key=';
+     $url .= drupal_urlencode($site_key);
+@@ -105,6 +124,22 @@ function _update_build_fetch_url($project, $site_key = '') {
+ }
+ 
+ /**
++ * Return the base of the URL to fetch available update data for a project.
++ *
++ * @param $project
++ *   The array of project information from update_get_projects().
++ * @return
++ *   The base of the URL used for fetching available update data. This does
++ *   not include the path elements to specify a particular project, version,
++ *   site_key, etc.
++ *
++ * @see _update_build_fetch_url()
++ */
++function _update_get_fetch_url_base($project) {
++  return isset($project['info']['project status url']) ? $project['info']['project status url'] : variable_get('update_fetch_url', UPDATE_DEFAULT_URL);
++}
++
++/**
+  * Perform any notifications that should be done once cron fetches new data.
+  *
+  * This method checks the status of the site using the new data and depending
+diff --git a/modules/update/update.info b/modules/update/update.info
+index a48f447..966c8f9 100644
+--- a/modules/update/update.info
++++ b/modules/update/update.info
+@@ -5,8 +5,8 @@ version = VERSION
+ package = Core - optional
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/update/update.module b/modules/update/update.module
+index f173d65..89bffe3 100644
+--- a/modules/update/update.module
++++ b/modules/update/update.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: update.module,v 1.17.2.4 2009/05/13 18:27:58 goba Exp $
++// $Id: update.module,v 1.17.2.5 2009/06/09 11:08:32 goba Exp $
+ 
+ /**
+  * @file
+@@ -51,6 +51,15 @@ define('UPDATE_NOT_CHECKED', -1);
+  */
+ define('UPDATE_UNKNOWN', -2);
+ 
++/**
++ * There was a failure fetching available update data for this project.
++ */
++define('UPDATE_NOT_FETCHED', -3);
++
++/**
++ * Maximum number of attempts to fetch available update data from a given host.
++ */
++define('UPDATE_MAX_FETCH_ATTEMPTS', 2);
+ 
+ /**
+  * Implementation of hook_help().
+@@ -267,6 +276,7 @@ function _update_requirement_check($project, $type) {
+       break;
+     case UPDATE_UNKNOWN:
+     case UPDATE_NOT_CHECKED:
++    case UPDATE_NOT_FETCHED:
+       $requirement_label = isset($project['reason']) ? $project['reason'] : t('Can not determine status');
+       $requirement['severity'] = REQUIREMENT_WARNING;
+       break;
+@@ -464,6 +474,7 @@ function _update_message_text($msg_type, $msg_reason, $report_link = FALSE, $lan
+ 
+     case UPDATE_UNKNOWN:
+     case UPDATE_NOT_CHECKED:
++    case UPDATE_NOT_FETCHED:
+       if ($msg_type == 'core') {
+         $text = t('There was a problem determining the status of available updates for your version of Drupal.', array(), $langcode);
+       }
+diff --git a/modules/update/update.report.inc b/modules/update/update.report.inc
+index 55f823a..58d5c07 100644
+--- a/modules/update/update.report.inc
++++ b/modules/update/update.report.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: update.report.inc,v 1.10.2.3 2009/04/29 17:17:21 goba Exp $
++// $Id: update.report.inc,v 1.10.2.4 2009/06/09 11:08:32 goba Exp $
+ 
+ /**
+  * @file
+@@ -48,6 +48,7 @@ function theme_update_report($data) {
+         $icon = theme('image', 'misc/watchdog-ok.png', t('ok'), t('ok'));
+         break;
+       case UPDATE_UNKNOWN:
++      case UPDATE_NOT_FETCHED:
+         $class = 'unknown';
+         $icon = theme('image', 'misc/watchdog-warning.png', t('warning'), t('warning'));
+         break;
+diff --git a/modules/upload/upload.info b/modules/upload/upload.info
+index 492a512..9e98171 100644
+--- a/modules/upload/upload.info
++++ b/modules/upload/upload.info
+@@ -5,8 +5,8 @@ package = Core - optional
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/user/user.info b/modules/user/user.info
+index 1a86346..cd1d6ad 100644
+--- a/modules/user/user.info
++++ b/modules/user/user.info
+@@ -5,8 +5,8 @@ package = Core - required
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/modules/user/user.install b/modules/user/user.install
+index 446b3df..8f9d359 100644
+--- a/modules/user/user.install
++++ b/modules/user/user.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: user.install,v 1.5.2.1 2009/01/06 15:46:38 goba Exp $
++// $Id: user.install,v 1.5.2.2 2009/07/01 20:51:56 goba Exp $
+ 
+ /**
+  * Implementation of hook_schema().
+@@ -191,6 +191,13 @@ function user_schema() {
+         'default' => '',
+         'description' => "User's signature.",
+       ),
++      'signature_format' => array(
++        'type' => 'int',
++        'size' => 'small',
++        'not null' => TRUE,
++        'default' => 0,
++        'description' => 'The {filter_formats}.format of the signature.',
++      ),
+       'created' => array(
+         'type' => 'int',
+         'not null' => TRUE,
+diff --git a/modules/user/user.module b/modules/user/user.module
+index 373f05a..c484c68 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: user.module,v 1.892.2.13 2009/04/27 12:02:27 goba Exp $
++// $Id: user.module,v 1.892.2.14 2009/07/01 20:51:56 goba Exp $
+ 
+ /**
+  * @file
+@@ -532,7 +532,7 @@ function user_fields() {
+     }
+     else {
+       // Make sure we return the default fields at least.
+-      $fields = array('uid', 'name', 'pass', 'mail', 'picture', 'mode', 'sort', 'threshold', 'theme', 'signature', 'created', 'access', 'login', 'status', 'timezone', 'language', 'init', 'data');
++      $fields = array('uid', 'name', 'pass', 'mail', 'picture', 'mode', 'sort', 'threshold', 'theme', 'signature', 'signature_format', 'created', 'access', 'login', 'status', 'timezone', 'language', 'init', 'data');
+     }
+   }
+ 
+@@ -1519,6 +1519,15 @@ function user_edit_form(&$form_state, $uid, $edit, $register = FALSE) {
+       '#default_value' => $edit['signature'],
+       '#description' => t('Your signature will be publicly displayed at the end of your comments.'),
+     );
++
++    // Prevent a "validation error" message when the user attempts to save with a default value they
++    // do not have access to.
++    if (!filter_access($edit['signature_format']) && empty($_POST)) {
++      drupal_set_message(t("The signature input format has been set to a format you don't have access to. It will be changed to a format you have access to when you save this page."));
++      $edit['signature_format'] = FILTER_FORMAT_DEFAULT;
++    }
++
++    $form['signature_settings']['signature_format'] = filter_form($edit['signature_format'], NULL, array('signature_format'));
+   }
+ 
+   // Picture/avatar:
+@@ -2031,7 +2040,7 @@ function user_comment(&$comment, $op) {
+   // Validate signature.
+   if ($op == 'view') {
+     if (variable_get('user_signatures', 0) && !empty($comment->signature)) {
+-      $comment->signature = check_markup($comment->signature, $comment->format);
++      $comment->signature = check_markup($comment->signature, $comment->signature_format, FALSE);
+     }
+     else {
+       $comment->signature = '';
+diff --git a/sites/default/default.settings.php b/sites/default/default.settings.php
+index 0a84f96..1182321 100644
+--- a/sites/default/default.settings.php
++++ b/sites/default/default.settings.php
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: default.settings.php,v 1.8.2.1 2008/08/13 06:52:36 dries Exp $
++// $Id: default.settings.php,v 1.8.2.2 2009/06/09 10:44:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -142,6 +142,7 @@ ini_set('session.cache_limiter',    'none');
+ ini_set('session.cookie_lifetime',  2000000);
+ ini_set('session.gc_maxlifetime',   200000);
+ ini_set('session.save_handler',     'user');
++ini_set('session.use_cookies',      1);
+ ini_set('session.use_only_cookies', 1);
+ ini_set('session.use_trans_sid',    0);
+ ini_set('url_rewriter.tags',        '');
+diff --git a/themes/bluemarine/bluemarine.info b/themes/bluemarine/bluemarine.info
+index 08d04da..47d9181 100644
+--- a/themes/bluemarine/bluemarine.info
++++ b/themes/bluemarine/bluemarine.info
+@@ -5,8 +5,8 @@ version = VERSION
+ core = 6.x
+ engine = phptemplate
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/themes/chameleon/chameleon.info b/themes/chameleon/chameleon.info
+index fc23602..948888b 100644
+--- a/themes/chameleon/chameleon.info
++++ b/themes/chameleon/chameleon.info
+@@ -12,8 +12,8 @@ stylesheets[all][] = common.css
+ version = VERSION
+ core = 6.x
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/themes/chameleon/marvin/marvin.info b/themes/chameleon/marvin/marvin.info
+index 6882131..024a2bf 100644
+--- a/themes/chameleon/marvin/marvin.info
++++ b/themes/chameleon/marvin/marvin.info
+@@ -7,8 +7,8 @@ version = VERSION
+ core = 6.x
+ base theme = chameleon
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/themes/garland/garland.info b/themes/garland/garland.info
+index 57462a6..5bc0005 100644
+--- a/themes/garland/garland.info
++++ b/themes/garland/garland.info
+@@ -7,8 +7,8 @@ engine = phptemplate
+ stylesheets[all][] = style.css
+ stylesheets[print][] = print.css
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/themes/garland/minnelli/minnelli.info b/themes/garland/minnelli/minnelli.info
+index 7f9d98f..9c0bd92 100644
+--- a/themes/garland/minnelli/minnelli.info
++++ b/themes/garland/minnelli/minnelli.info
+@@ -6,8 +6,8 @@ core = 6.x
+ base theme = garland
+ stylesheets[all][] = minnelli.css
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
+diff --git a/themes/pushbutton/pushbutton.info b/themes/pushbutton/pushbutton.info
+index 4564b81..eb830f8 100644
+--- a/themes/pushbutton/pushbutton.info
++++ b/themes/pushbutton/pushbutton.info
+@@ -5,8 +5,8 @@ version = VERSION
+ core = 6.x
+ engine = phptemplate
+ 
+-; Information added by drupal.org packaging script on 2009-05-13
+-version = "6.12"
++; Information added by drupal.org packaging script on 2009-07-01
++version = "6.13"
+ project = "drupal"
+-datestamp = "1242243950"
++datestamp = "1246481719"
+ 
