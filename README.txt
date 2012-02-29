@@ -16,9 +16,9 @@ Step-by-Step
 
 1.  If your docroot is NOT already under git version control initialize your docroot as a git repository: run 'git init' from the top-level of the docroot
 2.  Optional (if your docroot is NOT managed by git, and you want to see files changed), add the status of all current files to Git: run 'git add .'
-3.  For Drupal ONLY (NOT pressflow):  Clear out the version numbers from the core module .info files: run ~/path/to/script/rmv_dpl-version_nums.sh.  You might want to check to see that the patch does not modify the version numbers.
+3.  Drupal and post 6.24 Pressflow ONLY: Clear out the version numbers from the core module .info files: run ~/path/to/script/rmv_dpl-version_nums.sh.  You might want to check to see that the patch does not modify the version numbers.
 4.  Commit this (optional): git commit -m "Remove version numbers for core module .info files"
-5.  Apply the patch: git apply /path/to/patches/drupal/drupal-7.10.patch
+5.  Apply the patch: git apply -v --ignore-whitespace /path/to/patches/drupal/drupal-7.10.patch
 6.  Optional, commit the changes: git apply -am "Commit Message"
 7.  If your drupal docroot is NOT under git version control, remove .git folder (from docroot): rm -r .git.  This removes all traces of git and does not confuse systems such as SVN.
 4.  If your docroot is a part of a larger git-controlled group of folders, at this point, you need to add and commit files changed/added by the patch: 'git add .' and 'git commit -m "commit message"
