@@ -1,0 +1,1780 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index e5647c1..c9126fa 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,8 @@
+-// $Id: CHANGELOG.txt,v 1.253.2.39.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: CHANGELOG.txt,v 1.253.2.41 2010/08/11 20:35:47 goba Exp $
++
++Drupal 6.19, 2010-08-11
++----------------------
++- Fixed a variety of small bugs, improved code documentation.
+ 
+ Drupal 6.18, 2010-08-11
+ ----------------------
+@@ -233,6 +237,11 @@ Drupal 6.0, 2008-02-13
+ - Removed old system updates. Updates from Drupal versions prior to 5.x will
+   require upgrading to 5.x before upgrading to 6.x.
+ 
++Drupal 5.23, 2010-08-11
++-----------------------
++- Fixed security issues (File download access bypass, Comment unpublishing
++  bypass), see SA-CORE-2010-002.
++
+ Drupal 5.22, 2010-03-03
+ -----------------------
+ - Fixed security issues (Open redirection, Locale module cross site scripting,
+diff --git a/COPYRIGHT.txt b/COPYRIGHT.txt
+index 2e3e0ad..5ad7735 100644
+--- a/COPYRIGHT.txt
++++ b/COPYRIGHT.txt
+@@ -1,6 +1,6 @@
+-// $Id: COPYRIGHT.txt,v 1.2.2.2 2009/09/14 12:50:38 goba Exp $
++// $Id: COPYRIGHT.txt,v 1.2.2.3 2010/08/06 10:58:29 goba Exp $
+ 
+-All Drupal code is Copyright 2001 - 2009 by the original authors.
++All Drupal code is Copyright 2001 - 2010 by the original authors.
+ 
+ This program is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+diff --git a/PRESSFLOW.txt b/PRESSFLOW.txt
+index 1078e6d..57594fd 100644
+--- a/PRESSFLOW.txt
++++ b/PRESSFLOW.txt
+@@ -1 +1 @@
+-6.18.91
++6.19.96
+diff --git a/includes/actions.inc b/includes/actions.inc
+index dd237df..3b990a3 100644
+--- a/includes/actions.inc
++++ b/includes/actions.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: actions.inc,v 1.8.2.12.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: actions.inc,v 1.8.2.13 2010/08/11 20:35:47 goba Exp $
+ 
+ /**
+  * @file
+diff --git a/includes/batch.inc b/includes/batch.inc
+index fb7e41f..fea418f 100644
+--- a/includes/batch.inc
++++ b/includes/batch.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: batch.inc,v 1.14 2007/12/20 11:57:20 goba Exp $
++// $Id: batch.inc,v 1.14.2.1 2010/08/06 11:52:19 goba Exp $
+ 
+ /**
+  * @file Batch processing API for processes to run in multiple HTTP requests.
+@@ -133,6 +133,7 @@ function _batch_progress_page_nojs() {
+     // followed by the error message.
+     ob_start();
+     $fallback = $current_set['error_message'] .'<br/>'. $batch['error_message'];
++    drupal_maintenance_theme();
+     $fallback = theme('maintenance_page', $fallback, FALSE, FALSE);
+ 
+     // We strip the end of the page using a marker in the template, so any
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index 986a925..c31b2e1 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: bootstrap.inc,v 1.206.2.23 2010/06/02 13:07:45 goba Exp $
++// $Id: bootstrap.inc,v 1.206.2.29 2010/08/06 11:50:24 goba Exp $
+ 
+ /**
+  * @file
+@@ -222,6 +222,11 @@ define('LANGUAGE_LTR', 0);
+  */
+ define('LANGUAGE_RTL', 1);
+ 
++// Hide E_DEPRECATED messages.
++if (defined('E_DEPRECATED')) {
++  error_reporting(error_reporting() & ~E_DEPRECATED);
++}
++
+ /**
+  * Start the timer with the specified name. If you start and stop
+  * the same timer multiple times, the measured intervals will be
+@@ -592,7 +597,11 @@ function variable_init($conf = array(), $regenerate = FALSE, $recursion_depth =
+ }
+ 
+ /**
+- * Return a persistent variable.
++ * Returns a persistent variable.
++ *
++ * Case-sensitivity of the variable_* functions depends on the database
++ * collation used. To avoid problems, always use lower case for persistent
++ * variable names.
+  *
+  * @param $name
+  *   The name of the variable to return.
+@@ -610,7 +619,11 @@ function variable_get($name, $default) {
+ }
+ 
+ /**
+- * Set a persistent variable.
++ * Sets a persistent variable.
++ *
++ * Case-sensitivity of the variable_* functions depends on the database
++ * collation used. To avoid problems, always use lower case for persistent
++ * variable names.
+  *
+  * @param $name
+  *   The name of the variable to set.
+@@ -642,7 +655,11 @@ function variable_set($name, $value) {
+ }
+ 
+ /**
+- * Unset a persistent variable.
++ * Unsets a persistent variable.
++ *
++ * Case-sensitivity of the variable_* functions depends on the database
++ * collation used. To avoid problems, always use lower case for persistent
++ * variable names.
+  *
+  * @param $name
+  *   The name of the variable to undefine.
+@@ -657,7 +674,9 @@ function variable_del($name) {
+   unset($conf[$name]);
+ 
+   // The write-through rebuild optimization isn't compatible with SimpleTest.
+-  if (strpos($db_prefix, 'simpletest') === 0) {
++  // Because array-based prefixes don't work with SimpleTest, we can assume
++  // that a non-string prefix indicates lack of SimpleTest operations.
++  if (is_string($db_prefix) && strpos($db_prefix, 'simpletest') === 0) {
+     cache_clear_all('variables', 'cache');
+   }
+   
+@@ -1085,7 +1104,7 @@ function bootstrap_hooks() {
+ function drupal_unpack($obj, $field = 'data') {
+   if ($obj->$field && $data = unserialize($obj->$field)) {
+     foreach ($data as $key => $value) {
+-      if (!isset($obj->$key)) {
++      if (!empty($key) && !isset($obj->$key)) {
+         $obj->$key = $value;
+       }
+     }
+@@ -1203,7 +1222,8 @@ function request_uri() {
+  * Log a system message.
+  *
+  * @param $type
+- *   The category to which this message belongs.
++ *   The category to which this message belongs. Can be any string, but the
++ *   general practice is to use the name of the module calling watchdog().
+  * @param $message
+  *   The message to store in the log. See t() for documentation
+  *   on how $message and $variables interact. Keep $message
+@@ -1213,7 +1233,8 @@ function request_uri() {
+  *   NULL if message is already translated or not possible to
+  *   translate.
+  * @param $severity
+- *   The severity of the message, as per RFC 3164
++ *   The severity of the message, as per RFC 3164. Possible values are
++ *   WATCHDOG_ERROR, WATCHDOG_WARNING, etc.
+  * @param $link
+  *   A link to associate with the message.
+  *
+@@ -1237,7 +1258,7 @@ function watchdog($type, $message, $variables = array(), $severity = WATCHDOG_NO
+     );
+ 
+   // Call the logging hooks to log/process the message
+-  foreach (module_implements('watchdog', TRUE) as $module) {
++  foreach (module_implements('watchdog') as $module) {
+     module_invoke($module, 'watchdog', $log_message);
+   }
+ }
+diff --git a/includes/common.inc b/includes/common.inc
+index 989f46b..c3f7dc7 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: common.inc,v 1.756.2.88 2010/06/02 18:52:32 goba Exp $
++// $Id: common.inc,v 1.756.2.96 2010/08/11 20:35:47 goba Exp $
+ 
+ /**
+  * @file
+@@ -1375,42 +1375,48 @@ function format_date($timestamp, $type = 'medium', $format = '', $timezone = NUL
+  */
+ 
+ /**
+- * Generate a URL from a Drupal menu path. Will also pass-through existing URLs.
++ * Generates an internal or external URL.
++ *
++ * When creating links in modules, consider whether l() could be a better
++ * alternative than url().
+  *
+  * @param $path
+- *   The Drupal path being linked to, such as "admin/content/node", or an
+- *   existing URL like "http://drupal.org/".  The special path
+- *   '<front>' may also be given and will generate the site's base URL.
++ *   The internal path or external URL being linked to, such as "node/34" or
++ *   "http://example.com/foo". A few notes:
++ *   - If you provide a full URL, it will be considered an external URL.
++ *   - If you provide only the path (e.g. "node/34"), it will be
++ *     considered an internal link. In this case, it should be a system URL,
++ *     and it will be replaced with the alias, if one exists. Additional query
++ *     arguments for internal paths must be supplied in $options['query'], not
++ *     included in $path.
++ *   - If you provide an internal path and $options['alias'] is set to TRUE, the
++ *     path is assumed already to be the correct path alias, and the alias is
++ *     not looked up.
++ *   - The special string '<front>' generates a link to the site's base URL.
++ *   - If your external URL contains a query (e.g. http://example.com/foo?a=b),
++ *     then you can either URL encode the query keys and values yourself and
++ *     include them in $path, or use $options['query'] to let this function
++ *     URL encode them.
+  * @param $options
+- *   An associative array of additional options, with the following keys:
+- *   - 'query'
+- *       A URL-encoded query string to append to the link, or an array of query
+- *       key/value-pairs without any URL-encoding.
+- *   - 'fragment'
+- *       A fragment identifier (or named anchor) to append to the link.
+- *       Do not include the '#' character.
+- *   - 'absolute' (default FALSE)
+- *       Whether to force the output to be an absolute link (beginning with
+- *       http:). Useful for links that will be displayed outside the site, such
+- *       as in an RSS feed.
+- *   - 'alias' (default FALSE)
+- *       Whether the given path is an alias already.
+- *   - 'external'
+- *       Whether the given path is an external URL.
+- *   - 'language'
+- *       An optional language object. Used to build the URL to link to and
+- *       look up the proper alias for the link.
+- *   - 'base_url'
+- *       Only used internally, to modify the base URL when a language dependent
+- *       URL requires so.
+- *   - 'prefix'
+- *       Only used internally, to modify the path when a language dependent URL
+- *       requires so.
++ *   An associative array of additional options, with the following elements:
++ *   - 'query': A URL-encoded query string to append to the link, or an array of
++ *     query key/value-pairs without any URL-encoding.
++ *   - 'fragment': A fragment identifier (named anchor) to append to the URL.
++ *     Do not include the leading '#' character.
++ *   - 'absolute' (default FALSE): Whether to force the output to be an absolute
++ *     link (beginning with http:). Useful for links that will be displayed
++ *     outside the site, such as in an RSS feed.
++ *   - 'alias' (default FALSE): Whether the given path is a URL alias already.
++ *   - 'external': Whether the given path is an external URL.
++ *   - 'language': An optional language object. Used to build the URL to link
++ *     to and look up the proper alias for the link.
++ *   - 'base_url': Only used internally, to modify the base URL when a language
++ *     dependent URL requires so.
++ *   - 'prefix': Only used internally, to modify the path when a language
++ *     dependent URL requires so.
++ *
+  * @return
+  *   A string containing a URL to the given path.
+- *
+- * When creating links in modules, consider whether l() could be a better
+- * alternative than url().
+  */
+ function url($path = NULL, $options = array()) {
+   // Merge in defaults.
+@@ -1537,47 +1543,37 @@ function drupal_attributes($attributes = array()) {
+ }
+ 
+ /**
+- * Format an internal Drupal link.
++ * Formats an internal or external URL link as an HTML anchor tag.
+  *
+- * This function correctly handles aliased paths, and allows themes to highlight
+- * links to the current page correctly, so all internal links output by modules
+- * should be generated by this function if possible.
++ * This function correctly handles aliased paths, and adds an 'active' class
++ * attribute to links that point to the current page (for theming), so all
++ * internal links output by modules should be generated by this function if
++ * possible.
+  *
+  * @param $text
+- *   The text to be enclosed with the anchor tag.
++ *   The link text for the anchor tag.
+  * @param $path
+- *   The Drupal path being linked to, such as "admin/content/node". Can be an
+- *   external or internal URL.
+- *     - If you provide the full URL, it will be considered an external URL.
+- *     - If you provide only the path (e.g. "admin/content/node"), it is
+- *       considered an internal link. In this case, it must be a system URL
+- *       as the url() function will generate the alias.
+- *     - If you provide '<front>', it generates a link to the site's
+- *       base URL (again via the url() function).
+- *     - If you provide a path, and 'alias' is set to TRUE (see below), it is
+- *       used as is.
++ *   The internal path or external URL being linked to, such as "node/34" or
++ *   "http://example.com/foo". After the url() function is called to construct
++ *   the URL from $path and $options, the resulting URL is passed through
++ *   check_url() before it is inserted into the HTML anchor tag, to ensure
++ *   well-formed HTML. See url() for more information and notes.
+  * @param $options
+- *   An associative array of additional options, with the following keys:
+- *     - 'attributes'
+- *       An associative array of HTML attributes to apply to the anchor tag.
+- *     - 'query'
+- *       A query string to append to the link, or an array of query key/value
+- *       properties.
+- *     - 'fragment'
+- *       A fragment identifier (named anchor) to append to the link.
+- *       Do not include the '#' character.
+- *     - 'absolute' (default FALSE)
+- *       Whether to force the output to be an absolute link (beginning with
+- *       http:). Useful for links that will be displayed outside the site, such
+- *       as in an RSS feed.
+- *     - 'html' (default FALSE)
+- *       Whether the title is HTML, or just plain-text. For example for making
+- *       an image a link, this must be set to TRUE, or else you will see the
+- *       escaped HTML.
+- *     - 'alias' (default FALSE)
+- *       Whether the given path is an alias already.
++ *   An associative array of additional options, with the following elements:
++ *   - 'attributes': An associative array of HTML attributes to apply to the
++ *     anchor tag.
++ *   - 'html' (default FALSE): Whether $text is HTML or just plain-text. For
++ *     example, to make an image tag into a link, this must be set to TRUE, or
++ *     you will see the escaped HTML image tag.
++ *   - 'language': An optional language object. If the path being linked to is
++ *     internal to the site, $options['language'] is used to look up the alias
++ *     for the URL, and to determine whether the link is "active", or pointing
++ *     to the current page (the language as well as the path must match).This
++ *     element is also used by url().
++ *   - Additional $options elements used by the url() function.
++ *
+  * @return
+- *   an HTML string containing a link to the given path.
++ *   An HTML string containing a link to the given path.
+  */
+ function l($text, $path, $options = array()) {
+   global $language;
+@@ -2019,10 +2015,21 @@ function drupal_load_stylesheet($file, $optimize = NULL) {
+ 
+     if ($_optimize) {
+       // Perform some safe CSS optimizations.
+-      $contents = preg_replace('<
+-        \s*([@{}:;,]|\)\s|\s\()\s* |  # Remove whitespace around separators, but keep space around parentheses.
+-        /\*([^*\\\\]|\*(?!/))+\*/     # Remove comments that are not CSS hacks.
+-        >x', '\1', $contents);
++      // Regexp to match comment blocks.
++      $comment     = '/\*[^*]*\*+(?:[^/*][^*]*\*+)*/';
++      // Regexp to match double quoted strings.
++      $double_quot = '"[^"\\\\]*(?:\\\\.[^"\\\\]*)*"';
++      // Regexp to match single quoted strings.
++      $single_quot = "'[^'\\\\]*(?:\\\\.[^'\\\\]*)*'";
++      $contents = preg_replace_callback(
++        "<$double_quot|$single_quot|$comment>Sus",  // Match all comment blocks along
++        "_process_comment",                         // with double/single quoted strings
++        $contents);                                 // and feed them to _process_comment().
++      $contents = preg_replace(
++        '<\s*([@{}:;,]|\)\s|\s\()\s*>S',            // Remove whitespace around separators,
++        '\1', $contents);                           // but keep space around parentheses.
++      // End the file with a new line.
++      $contents .= "\n";
+     }
+ 
+     // Change back directory.
+@@ -2033,6 +2040,41 @@ function drupal_load_stylesheet($file, $optimize = NULL) {
+ }
+ 
+ /**
++ * Process comment blocks.
++ *
++ * This is the callback function for the preg_replace_callback()
++ * used in drupal_load_stylesheet_content(). Support for comment
++ * hacks is implemented here.
++ */
++function _process_comment($matches) {
++  static $keep_nextone = FALSE;
++
++  // Quoted string, keep it.
++  if ($matches[0][0] == "'" || $matches[0][0] == '"') {
++    return $matches[0];
++  }
++  // End of IE-Mac hack, keep it.
++  if ($keep_nextone) {
++    $keep_nextone = FALSE;
++    return $matches[0];
++  }
++  switch (strrpos($matches[0], '\\')) {
++    case FALSE :
++      // No backslash, strip it.
++      return '';
++
++    case drupal_strlen($matches[0])-3 :
++      // Ends with \*/ so is a multi line IE-Mac hack, keep the next one also.
++      $keep_nextone = TRUE;
++      return '/*_\*/';
++
++    default :
++      // Single line IE-Mac hack.
++      return '/*\_*/';
++  }
++}
++
++/**
+  * Loads stylesheets recursively and returns contents with corrected paths.
+  *
+  * This function is used for recursive loading of stylesheets and
+@@ -2790,9 +2832,11 @@ function drupal_system_listing($mask, $directory, $key = 'name', $min_depth = 1)
+ 
+ 
+ /**
+- * This dispatch function hands off structured Drupal arrays to type-specific
+- * *_alter implementations. It ensures a consistent interface for all altering
+- * operations.
++ * Hands off alterable variables to type-specific *_alter implementations.
++ *
++ * This dispatch function hands off the passed in variables to type-specific
++ * hook_TYPE_alter() implementations in modules. It ensures a consistent
++ * interface for all altering operations.
+  *
+  * @param $type
+  *   The data type of the structured array. 'form', 'links',
+@@ -2842,9 +2886,16 @@ function drupal_alter($type, &$data) {
+  * Renders HTML given a structured array tree.
+  *
+  * Recursively iterates over each of the array elements, generating HTML code.
+- * This function is usually called from within a another function, like
++ * This function is usually called from within another function, like
+  * drupal_get_form() or node_view().
+  *
++ * drupal_render() flags each element with a '#printed' status to indicate that
++ * the element has been rendered, which allows individual elements of a given
++ * array to be rendered independently. This prevents elements from being
++ * rendered more than once on subsequent calls to drupal_render() if, for example,
++ * they are part of a larger array. If the same array or array element is passed
++ * more than once to drupal_render(), it simply returns a NULL value.
++ *
+  * @param $elements
+  *   The structured array describing the data to be rendered.
+  * @return
+@@ -3310,7 +3361,7 @@ function drupal_uninstall_schema($module) {
+  */
+ function drupal_get_schema_unprocessed($module, $table = NULL) {
+   // Load the .install file to get hook_schema.
+-  module_load_include('install', $module);
++  module_load_install($module);
+   $schema = module_invoke($module, 'schema');
+ 
+   if (!is_null($table) && isset($schema[$table])) {
+@@ -3638,6 +3689,8 @@ function watchdog_severity_levels() {
+ 
+ /**
+  * Explode a string of given tags into an array.
++ *
++ * @see drupal_implode_tags()
+  */
+ function drupal_explode_tags($tags) {
+   // This regexp allows the following types of user input:
+@@ -3662,6 +3715,8 @@ function drupal_explode_tags($tags) {
+ 
+ /**
+  * Implode an array of tags into a string.
++ *
++ * @see drupal_explode_tags()
+  */
+ function drupal_implode_tags($tags) {
+   $encoded_tags = array();
+diff --git a/includes/database.inc b/includes/database.inc
+index f855d89..5733e1d 100644
+--- a/includes/database.inc
++++ b/includes/database.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: database.inc,v 1.92.2.9 2010/02/01 16:32:10 goba Exp $
++// $Id: database.inc,v 1.92.2.10 2010/08/06 11:05:03 goba Exp $
+ 
+ /**
+  * @file
+@@ -448,16 +448,20 @@ function db_rewrite_sql($query, $primary_table = 'n', $primary_field = 'nid',  $
+ }
+ 
+ /**
+- * Adds the DISTINCT flag to the supplied query if a DISTINCT doesn't already
+- * exist in the query. Returns the altered query.
++ * Adds the DISTINCT flag to the supplied query and returns the altered query.
+  *
+- * This will not, and never did guarantee that you will obtain distinct 
+- * values of $table.$field.
++ * The supplied query should not contain a DISTINCT flag. This will not, and
++ * never did guarantee that you will obtain distinct values of $table.$field.
+  *
+- * @param $table Unused. Kept to remain API compatibility.
+- * @param $field Unused. Kept to remain API compatibility.
+- * @param $query Query to which the DISTINCT flag should be applied.
+- * @return SQL query with the DISTINCT flag set.
++ * @param $table
++ *   Unused. Kept to retain API compatibility.
++ * @param $field
++ *   Unused. Kept to retain API compatibility.
++ * @param $query
++ *   Query to which the DISTINCT flag should be applied.
++ *
++ * @return
++ *   SQL query with the DISTINCT flag set.
+  */
+ function db_distinct_field($table, $field, $query) {
+   $matches = array();
+@@ -465,6 +469,7 @@ function db_distinct_field($table, $field, $query) {
+     // Only add distinct to the outer SELECT to avoid messing up subqueries.
+     $query = preg_replace('/^SELECT/i', 'SELECT DISTINCT', $query);
+   }
++
+   return $query;
+ }
+ 
+diff --git a/includes/file.inc b/includes/file.inc
+index 4f24c59..3c8f246 100644
+--- a/includes/file.inc
++++ b/includes/file.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: file.inc,v 1.121.2.12 2010/05/11 09:49:58 goba Exp $
++// $Id: file.inc,v 1.121.2.13 2010/08/11 17:40:55 goba Exp $
+ 
+ /**
+  * @file
+@@ -397,11 +397,23 @@ function file_move(&$source, $dest = 0, $replace = FILE_EXISTS_RENAME) {
+ /**
+  * Modify a filename as needed for security purposes.
+  *
+- * Dangerous file names will be altered; for instance, the file name
+- * "exploit.php.pps" will become "exploit.php_.pps". All extensions that are
++ * Munging a file name prevents unknown file extensions from masking exploit
++ * files. When web servers such as Apache decide how to process a URL request,
++ * they use the file extension. If the extension is not recognized, Apache
++ * skips that extension and uses the previous file extension. For example, if
++ * the file being requested is exploit.php.pps, and Apache does not recognize
++ * the '.pps' extension, it treats the file as PHP and executes it. To make
++ * this file name safe for Apache and prevent it from executing as PHP, the
++ * .php extension is "munged" into .php_, making the safe file name
++ * exploit.php_.pps.
++ *
++ * Specifically, this function adds an underscore to all extensions that are
+  * between 2 and 5 characters in length, internal to the file name, and not
+- * included in $extensions will be altered by adding an underscore. If variable
+- * 'allow_insecure_uploads' evaluates to TRUE, no alterations will be made.
++ * included in $extensions.
++ *
++ * Function behavior is also controlled by the Drupal variable
++ * 'allow_insecure_uploads'. If 'allow_insecure_uploads' evaluates to TRUE, no
++ * alterations will be made, if it evaluates to FALSE, the filename is 'munged'.
+  *
+  * @param $filename
+  *   File name to modify.
+diff --git a/includes/form.inc b/includes/form.inc
+index f4b06ce..4f027b7 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: form.inc,v 1.265.2.33 2010/05/19 15:02:32 goba Exp $
++// $Id: form.inc,v 1.265.2.34 2010/08/06 11:02:49 goba Exp $
+ 
+ /**
+  * @defgroup forms Form builder functions
+@@ -248,9 +248,14 @@ function form_get_cache($form_build_id, &$form_state) {
+ }
+ 
+ /**
+- * Retrieves a form using a form_id, populates it with $form_state['values'],
+- * processes it, and returns any validation errors encountered. This
+- * function is the programmatic counterpart to drupal_get_form().
++ * Retrieves, populates, and processes a form.
++ *
++ * This function allows you to supply values for form elements and submit a
++ * form for processing. Compare to drupal_get_form(), which also builds and
++ * processes a form, but does not allow you to supply values.
++ *
++ * There is no return value, but you can check to see if there are errors by
++ * calling form_get_errors().
+  *
+  * @param $form_id
+  *   The unique string identifying the desired form. If a function
+@@ -270,7 +275,6 @@ function form_get_cache($form_build_id, &$form_state) {
+  *   For example, the node_edit form requires that a node object be passed
+  *   in here when it is called.
+  * For example:
+- *
+  * @code
+  * // register a new user
+  * $form_state = array();
+diff --git a/includes/locale.inc b/includes/locale.inc
+index 03c6a36..a88033b 100644
+--- a/includes/locale.inc
++++ b/includes/locale.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: locale.inc,v 1.174.2.13 2010/05/28 13:07:27 goba Exp $
++// $Id: locale.inc,v 1.174.2.14 2010/08/11 19:42:26 goba Exp $
+ 
+ /**
+  * @file
+@@ -1145,7 +1145,7 @@ function _locale_import_read_po($op, $file, $mode = NULL, $lang = NULL, $group =
+       $context = "MSGID_PLURAL";
+     }
+     elseif (!strncmp("msgid", $line, 5)) {
+-      if ($context == "MSGSTR") {   // End current entry, start a new one
++      if (($context == "MSGSTR") || ($context == "MSGSTR_ARR")) { // End current entry, start a new one
+         _locale_import_one_string($op, $current, $mode, $lang, $file, $group);
+         $current = array();
+       }
+@@ -1290,7 +1290,7 @@ function _locale_import_one_string($op, $value = NULL, $mode = NULL, $lang = NUL
+         $languages = language_list();
+         if (($mode != LOCALE_IMPORT_KEEP) || empty($languages[$lang]->plurals)) {
+           // Since we only need to parse the header if we ought to update the
+-          // plural formula, only run this if we don't need to keep existing 
++          // plural formula, only run this if we don't need to keep existing
+           // data untouched or if we don't have an existing plural formula.
+           $header = _locale_import_parse_header($value['msgstr']);
+ 
+diff --git a/includes/unicode.inc b/includes/unicode.inc
+index 4fe72c6..f60eb42 100644
+--- a/includes/unicode.inc
++++ b/includes/unicode.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: unicode.inc,v 1.29 2007/12/28 12:02:50 dries Exp $
++// $Id: unicode.inc,v 1.29.2.1 2010/06/30 09:04:38 goba Exp $
+ 
+ /**
+  * Indicates an error during check for PHP unicode support.
+@@ -319,14 +319,20 @@ function _mime_header_decode($matches) {
+ }
+ 
+ /**
+- * Decode all HTML entities (including numerical ones) to regular UTF-8 bytes.
+- * Double-escaped entities will only be decoded once ("&amp;lt;" becomes "&lt;", not "<").
++ * Decodes all HTML entities (including numerical ones) to regular UTF-8 bytes.
++ *
++ * Double-escaped entities will only be decoded once ("&amp;lt;" becomes "&lt;",
++ * not "<"). Be careful when using this function, as decode_entities can revert
++ * previous sanitization efforts (&lt;script&gt; will become <script>).
+  *
+  * @param $text
+  *   The text to decode entities in.
+  * @param $exclude
+  *   An array of characters which should not be decoded. For example,
+  *   array('<', '&', '"'). This affects both named and numerical entities.
++ *
++ * @return
++ *   The input $text, with all HTML entities decoded once.
+  */
+ function decode_entities($text, $exclude = array()) {
+   static $table;
+diff --git a/modules/aggregator/aggregator.info b/modules/aggregator/aggregator.info
+index 2b5f439..ee13b7f 100644
+--- a/modules/aggregator/aggregator.info
++++ b/modules/aggregator/aggregator.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/block/block.info b/modules/block/block.info
+index 86aca65..03bf089 100644
+--- a/modules/block/block.info
++++ b/modules/block/block.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/blog/blog.info b/modules/blog/blog.info
+index 9d81a72..7902560 100644
+--- a/modules/blog/blog.info
++++ b/modules/blog/blog.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/blogapi/blogapi.info b/modules/blogapi/blogapi.info
+index 10d9776..c8526f3 100644
+--- a/modules/blogapi/blogapi.info
++++ b/modules/blogapi/blogapi.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/book/book.info b/modules/book/book.info
+index 4a54a3a..a7daa74 100644
+--- a/modules/book/book.info
++++ b/modules/book/book.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/book/book.pages.inc b/modules/book/book.pages.inc
+index a20bfbe..35c7fdd 100644
+--- a/modules/book/book.pages.inc
++++ b/modules/book/book.pages.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: book.pages.inc,v 1.5.2.1 2008/08/13 23:59:13 drumm Exp $
++// $Id: book.pages.inc,v 1.5.2.2 2010/08/06 11:00:49 goba Exp $
+ 
+ /**
+  * @file
+@@ -216,19 +216,15 @@ function book_remove_form_submit($form, &$form_state) {
+ }
+ 
+ /**
+- * AJAX callback to replace the book parent select options.
++ * Renders a new parent page select element when the book selection changes.
+  *
+- * This function is called when the selected book is changed.  It updates the
+- * cached form (either the node form or the book outline form) and returns
+- * rendered output to be used to replace the select containing the possible
+- * parent pages in the newly selected book.
++ * This function is called via AJAX when the selected book is changed on a node
++ * or book outline form. It creates a new parent page select element, adds it
++ * to the cached form, and then returns the rendered element so it can be
++ * displayed on the form.
+  *
+- * @param $build_id
+- *   The form's build_id.
+- * @param $bid
+- *   A bid from from among those in the form's book select.
+  * @return
+- *   Prints the replacement HTML in JSON format.
++ *   The rendered parent page select element.
+  */
+ function book_form_update() {
+   $bid = $_POST['book']['bid'];
+diff --git a/modules/color/color.info b/modules/color/color.info
+index 320d86e..862140c 100644
+--- a/modules/color/color.info
++++ b/modules/color/color.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/comment/comment.info b/modules/comment/comment.info
+index 98bea24..c05608a 100644
+--- a/modules/comment/comment.info
++++ b/modules/comment/comment.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/comment/comment.module b/modules/comment/comment.module
+index 8ece8f0..c0d7900 100644
+--- a/modules/comment/comment.module
++++ b/modules/comment/comment.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: comment.module,v 1.617.2.16.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: comment.module,v 1.617.2.17 2010/08/11 20:35:47 goba Exp $
+ 
+ /**
+  * @file
+diff --git a/modules/contact/contact.info b/modules/contact/contact.info
+index af7257b..f4aac1f 100644
+--- a/modules/contact/contact.info
++++ b/modules/contact/contact.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/dblog/dblog.info b/modules/dblog/dblog.info
+index 6dff526..fdde5b6 100644
+--- a/modules/dblog/dblog.info
++++ b/modules/dblog/dblog.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/filter/filter.info b/modules/filter/filter.info
+index 7668eda..493c4cc 100644
+--- a/modules/filter/filter.info
++++ b/modules/filter/filter.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/filter/filter.module b/modules/filter/filter.module
+index b2c605b..37dec60 100644
+--- a/modules/filter/filter.module
++++ b/modules/filter/filter.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: filter.module,v 1.204.2.15 2010/05/28 14:40:02 goba Exp $
++// $Id: filter.module,v 1.204.2.16 2010/08/06 11:20:12 goba Exp $
+ 
+ /**
+  * @file
+@@ -965,23 +965,30 @@ function filter_xss_admin($string) {
+ }
+ 
+ /**
+- * Filters XSS. Based on kses by Ulf Harnhammar, see
+- * http://sourceforge.net/projects/kses
++ * Filters an HTML string to prevent cross-site-scripting (XSS) vulnerabilities.
+  *
+- * For examples of various XSS attacks, see:
+- * http://ha.ckers.org/xss.html
++ * Based on kses by Ulf Harnhammar, see http://sourceforge.net/projects/kses.
++ * For examples of various XSS attacks, see http://ha.ckers.org/xss.html.
+  *
+  * This code does four things:
+- * - Removes characters and constructs that can trick browsers
+- * - Makes sure all HTML entities are well-formed
+- * - Makes sure all HTML tags and attributes are well-formed
+- * - Makes sure no HTML tags contain URLs with a disallowed protocol (e.g. javascript:)
++ * - Removes characters and constructs that can trick browsers.
++ * - Makes sure all HTML entities are well-formed.
++ * - Makes sure all HTML tags and attributes are well-formed.
++ * - Makes sure no HTML tags contain URLs with a disallowed protocol (e.g.
++ *   javascript:).
+  *
+  * @param $string
+- *   The string with raw HTML in it. It will be stripped of everything that can cause
+- *   an XSS attack.
++ *   The string with raw HTML in it. It will be stripped of everything that can
++ *   cause an XSS attack.
+  * @param $allowed_tags
+  *   An array of allowed tags.
++ *
++ * @return
++ *   An XSS safe version of $string, or an empty string if $string is not
++ *   valid UTF-8.
++ *
++ * @see drupal_validate_utf8()
++ * @ingroup sanitization
+  */
+ function filter_xss($string, $allowed_tags = array('a', 'em', 'strong', 'cite', 'code', 'ul', 'ol', 'li', 'dl', 'dt', 'dd')) {
+   // Only operate on valid UTF-8 strings. This is necessary to prevent cross
+diff --git a/modules/forum/forum.info b/modules/forum/forum.info
+index 5061ad9..d35e5c9 100644
+--- a/modules/forum/forum.info
++++ b/modules/forum/forum.info
+@@ -8,7 +8,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/help/help.info b/modules/help/help.info
+index 0c73a90..fb54b1b 100644
+--- a/modules/help/help.info
++++ b/modules/help/help.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/locale/locale.info b/modules/locale/locale.info
+index 11ce749..a458d3c 100644
+--- a/modules/locale/locale.info
++++ b/modules/locale/locale.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/menu/menu.info b/modules/menu/menu.info
+index 14b800f..a22fc79 100644
+--- a/modules/menu/menu.info
++++ b/modules/menu/menu.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/node/node.info b/modules/node/node.info
+index 6b44edf..b81f2ce 100644
+--- a/modules/node/node.info
++++ b/modules/node/node.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/node/node.module b/modules/node/node.module
+index 076342a..1b28b85 100644
+--- a/modules/node/node.module
++++ b/modules/node/node.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: node.module,v 1.947.2.24 2010/06/02 12:11:07 goba Exp $
++// $Id: node.module,v 1.947.2.26 2010/08/06 11:41:13 goba Exp $
+ 
+ /**
+  * @file
+@@ -1232,7 +1232,10 @@ function node_search($op = 'search', $keys = NULL) {
+       }
+       if ($weight = (int)variable_get('node_rank_recent', 5)) {
+         // Exponential decay with half-life of 6 months, starting at last indexed node
+-        $ranking[] = '%d * POW(2, (GREATEST(MAX(n.created), MAX(n.changed), MAX(c.last_comment_timestamp)) - %d) * 6.43e-8)';
++        // c.last_comment_timestamp may be NULL. Since both MAX(anynumber, NULL) and
++        // GREATEST(anynumber, NULL) return NULL, we OR MAX(c.last_comment_timestamp) with 1
++        // to prevent it from being NULL.
++        $ranking[] = '%d * POW(2, (GREATEST(MAX(n.created), MAX(n.changed), MAX(c.last_comment_timestamp) || 1) - %d) * 6.43e-8)';
+         $arguments2[] = $weight;
+         $arguments2[] = (int)variable_get('node_cron_last', 0);
+         $join2 .= ' LEFT JOIN {node_comment_statistics} c ON c.nid = i.sid';
+@@ -2187,13 +2190,13 @@ function node_db_rewrite_sql($query, $primary_table, $primary_field) {
+ }
+ 
+ /**
+- * This function will call module invoke to get a list of grants and then
+- * write them to the database. It is called at node save, and should be
+- * called by modules whenever something other than a node_save causes
+- * the permissions on a node to change.
++ * Gets the list of node access grants and writes them to the database.
+  *
+- * This function is the only function that should write to the node_access
+- * table.
++ * This function is called when a node is saved, and can also be called by
++ * modules if something other than a node save causes node access permissions
++ * to change. It collects all node access grants for the node from
++ * hook_node_access_records() implementations and saves the collected
++ * grants to the database.
+  *
+  * @param $node
+  *   The $node to acquire grants for.
+@@ -2217,12 +2220,12 @@ function node_access_acquire_grants($node) {
+ }
+ 
+ /**
+- * This function will write a list of grants to the database, deleting
+- * any pre-existing grants. If a realm is provided, it will only
+- * delete grants from that realm, but it will always delete a grant
+- * from the 'all' realm. Modules which utilize node_access can
+- * use this function when doing mass updates due to widespread permission
+- * changes.
++ * Writes a list of grants to the database, deleting any previously saved ones.
++ *
++ * If a realm is provided, it will only delete grants from that realm, but it
++ * will always delete a grant from the 'all' realm. Modules that utilize
++ * node_access can use this function when doing mass updates due to widespread
++ * permission changes.
+  *
+  * @param $node
+  *   The $node being written to. All that is necessary is that it contain a nid.
+diff --git a/modules/openid/openid.info b/modules/openid/openid.info
+index 6574b2b..4516b2e 100644
+--- a/modules/openid/openid.info
++++ b/modules/openid/openid.info
+@@ -6,7 +6,7 @@ package = Core - optional
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/openid/openid.install b/modules/openid/openid.install
+index b772fb0..8c4ac89 100644
+--- a/modules/openid/openid.install
++++ b/modules/openid/openid.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: openid.install,v 1.3.2.1.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: openid.install,v 1.3.2.2 2010/08/11 20:35:48 goba Exp $
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/openid/openid.module b/modules/openid/openid.module
+index 3ec5bab..0ac8674 100644
+--- a/modules/openid/openid.module
++++ b/modules/openid/openid.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: openid.module,v 1.19.2.9.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: openid.module,v 1.19.2.11 2010/08/11 20:35:48 goba Exp $
+ 
+ /**
+  * @file
+@@ -111,7 +111,7 @@ function openid_form_alter(&$form, $form_state, $form_id) {
+       '#weight' => -1,
+       '#description' => l(t('What is OpenID?'), 'http://openid.net/', array('external' => TRUE)),
+     );
+-    $form['openid.return_to'] = array('#type' => 'hidden', '#value' => url('openid/authenticate', array('absolute' => TRUE, 'query' => drupal_get_destination())));
++    $form['openid.return_to'] = array('#type' => 'hidden', '#value' => url('openid/authenticate', array('absolute' => TRUE, 'query' => user_login_destination())));
+   }
+   elseif ($form_id == 'user_register' && isset($_SESSION['openid']['values'])) {
+     // We were unable to auto-register a new user. Prefill the registration
+diff --git a/modules/path/path.info b/modules/path/path.info
+index 80a94e7..47f5fbd 100644
+--- a/modules/path/path.info
++++ b/modules/path/path.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/path_alias_cache/path_alias_cache.module b/modules/path_alias_cache/path_alias_cache.module
+index 75abbfd..8af78bf 100644
+--- a/modules/path_alias_cache/path_alias_cache.module
++++ b/modules/path_alias_cache/path_alias_cache.module
+@@ -1,6 +1,15 @@
+ <?php
+ 
+-/*
++/**
++ * Implementation of hook_flush_caches().
++ *
++ * @return array
++ */
++function path_alias_cache_flush_caches() {
++  return array('cache_path');
++}
++
++/**
+  * Implementation of hook_lookup_path
+  *
+  * This version of lookup_path is almost exactly what is in core, but adds a cache table.
+@@ -128,20 +137,19 @@ function path_alias_cache_cache_system_paths() {
+   // Check if the system paths for this page were loaded from cache in this
+   // request to avoid writing to cache on every request.
+   $cache = &path_alias_cache_static('path_alias_cache_lookup_path', array());
+-  if (!array_key_exists('system_paths', $cache)) {
++  if (empty($cache['system_paths']) && !empty($cache['map'])) {
+     // Generate a cache ID (cid) specifically for this page.
+-    $cid = array_key_exists('q', $_GET) ? $_GET['q'] : '';
++    $cid = $_GET['q'];
+     // The static $map array used by drupal_lookup_path() includes all
+     // system paths for the page request.
+     if (array_key_exists('map', $cache) && is_array($cache['map']) && $paths = current($cache['map'])) {
+       $data = array_keys($paths);
+-      $expire = $_SERVER['REQUEST_TIME'] + variable_get('cache_lifetime', 0);
++      $expire = $_SERVER['REQUEST_TIME'] + 86400;
+       cache_set($cid, $data, 'cache_path', $expire);
+     }
+   }
+ }
+ 
+-
+ /**
+  * Central static variable storage.
+  *
+diff --git a/modules/php/php.info b/modules/php/php.info
+index e5456bc..3172b7a 100644
+--- a/modules/php/php.info
++++ b/modules/php/php.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/ping/ping.info b/modules/ping/ping.info
+index 3ff6f3b..7ded5ca 100644
+--- a/modules/ping/ping.info
++++ b/modules/ping/ping.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/poll/poll.info b/modules/poll/poll.info
+index 0ba5f1a..0f5be4a 100644
+--- a/modules/poll/poll.info
++++ b/modules/poll/poll.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/profile/profile.info b/modules/profile/profile.info
+index c9ccd41..b252930 100644
+--- a/modules/profile/profile.info
++++ b/modules/profile/profile.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/search/search.info b/modules/search/search.info
+index 57fe514..44605cb 100644
+--- a/modules/search/search.info
++++ b/modules/search/search.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/search/search.module b/modules/search/search.module
+index a23b7ae..d33cefe 100644
+--- a/modules/search/search.module
++++ b/modules/search/search.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: search.module,v 1.250.2.10 2010/05/28 15:20:35 goba Exp $
++// $Id: search.module,v 1.250.2.11 2010/08/06 11:18:01 goba Exp $
+ 
+ /**
+  * @file
+@@ -988,15 +988,14 @@ function search_get_keys() {
+  * for all of the search features to work.
+  *
+  * There are three ways to interact with the search system:
+- * - Specifically for searching nodes, you can implement nodeapi('update index')
+- *   and nodeapi('search result'). However, note that the search system already
+- *   indexes all visible output of a node, i.e. everything displayed normally
+- *   by hook_view() and hook_nodeapi('view'). This is usually sufficient.
+- *   You should only use this mechanism if you want additional, non-visible data
+- *   to be indexed.
++ * - Specifically for searching nodes, you can implement
++ *   hook_nodeapi('update index') and hook_nodeapi('search result'). However,
++ *   note that the search system already indexes all visible output of a node,
++ *   i.e. everything displayed normally by hook_view() and hook_nodeapi('view').
++ *   This is usually sufficient. You should only use this mechanism if you want
++ *   additional, non-visible data to be indexed.
+  * - Implement hook_search(). This will create a search tab for your module on
+- *   the /search page with a simple keyword search form. You may optionally
+- *   implement hook_search_item() to customize the display of your results.
++ *   the /search page with a simple keyword search form.
+  * - Implement hook_update_index(). This allows your module to use Drupal's
+  *   HTML indexing mechanism for searching full text efficiently.
+  *
+diff --git a/modules/statistics/statistics.info b/modules/statistics/statistics.info
+index 5157223..8d80be0 100644
+--- a/modules/statistics/statistics.info
++++ b/modules/statistics/statistics.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/syslog/syslog.info b/modules/syslog/syslog.info
+index 0f73cbf..8be2dfc 100644
+--- a/modules/syslog/syslog.info
++++ b/modules/syslog/syslog.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/system/page.tpl.php b/modules/system/page.tpl.php
+index cb0a937..a2afa66 100644
+--- a/modules/system/page.tpl.php
++++ b/modules/system/page.tpl.php
+@@ -1,10 +1,9 @@
+ <?php
+-// $Id: page.tpl.php,v 1.11.2.1 2009/04/30 00:13:31 goba Exp $
++// $Id: page.tpl.php,v 1.11.2.2 2010/08/06 11:13:42 goba Exp $
+ 
+ /**
+- * @file page.tpl.php
+- *
+- * Theme implementation to display a single Drupal page.
++ * @file
++ * Displays a single Drupal page.
+  *
+  * Available variables:
+  *
+@@ -14,62 +13,68 @@
+  * - $css: An array of CSS files for the current page.
+  * - $directory: The directory the theme is located in, e.g. themes/garland or
+  *   themes/garland/minelli.
+- * - $is_front: TRUE if the current page is the front page. Used to toggle the mission statement.
++ * - $is_front: TRUE if the current page is the front page.
+  * - $logged_in: TRUE if the user is registered and signed in.
+  * - $is_admin: TRUE if the user has permission to access administration pages.
+  *
+  * Page metadata:
+  * - $language: (object) The language the site is being displayed in.
+  *   $language->language contains its textual representation.
+- *   $language->dir contains the language direction. It will either be 'ltr' or 'rtl'.
+- * - $head_title: A modified version of the page title, for use in the TITLE tag.
+- * - $head: Markup for the HEAD section (including meta tags, keyword tags, and
++ *   $language->dir contains the language direction. It will either be 'ltr' or
++ *   'rtl'.
++ * - $head_title: A modified version of the page title, for use in the TITLE
++ *   element.
++ * - $head: Markup for the HEAD element (including meta tags, keyword tags, and
+  *   so on).
+  * - $styles: Style tags necessary to import all CSS files for the page.
+  * - $scripts: Script tags necessary to load the JavaScript files and settings
+  *   for the page.
+  * - $body_classes: A set of CSS classes for the BODY tag. This contains flags
+- *   indicating the current layout (multiple columns, single column), the current
+- *   path, whether the user is logged in, and so on.
++ *   indicating the current layout (multiple columns, single column), the
++ *   current path, whether the user is logged in, and so on.
+  *
+  * Site identity:
+  * - $front_page: The URL of the front page. Use this instead of $base_path,
+- *   when linking to the front page. This includes the language domain or prefix.
++ *   when linking to the front page. This includes the language domain or
++ *   prefix.
+  * - $logo: The path to the logo image, as defined in theme configuration.
+- * - $site_name: The name of the site, empty when display has been disabled
+- *   in theme settings.
++ * - $site_name: The name of the site, empty when display has been disabled in
++ *   theme settings.
+  * - $site_slogan: The slogan of the site, empty when display has been disabled
+  *   in theme settings.
+- * - $mission: The text of the site mission, empty when display has been disabled
+- *   in theme settings.
++ * - $mission: The text of the site mission, empty when display has been
++ *   disabled in theme settings.
+  *
+  * Navigation:
+- * - $search_box: HTML to display the search box, empty if search has been disabled.
+- * - $primary_links (array): An array containing primary navigation links for the
+- *   site, if they have been configured.
+- * - $secondary_links (array): An array containing secondary navigation links for
++ * - $search_box: HTML to display the search box, empty if search has been
++ *   disabled.
++ * - $primary_links (array): An array containing primary navigation links for
+  *   the site, if they have been configured.
++ * - $secondary_links (array): An array containing secondary navigation links
++ *   for the site, if they have been configured.
+  *
+- * Page content (in order of occurrance in the default page.tpl.php):
++ * Page content (in order of occurrence in the default page.tpl.php):
+  * - $left: The HTML for the left sidebar.
+- *
+  * - $breadcrumb: The breadcrumb trail for the current page.
+  * - $title: The page title, for use in the actual HTML content.
+  * - $help: Dynamic help text, mostly for admin pages.
+- * - $messages: HTML for status and error messages. Should be displayed prominently.
+- * - $tabs: Tabs linking to any sub-pages beneath the current page (e.g., the view
+- *   and edit tabs when displaying a node).
+- *
++ * - $messages: HTML for status and error messages. Should be displayed
++ *   prominently.
++ * - $tabs: Tabs linking to any sub-pages beneath the current page (e.g., the
++ *   view and edit tabs when displaying a node).
+  * - $content: The main content of the current Drupal page.
+- *
+  * - $right: The HTML for the right sidebar.
++ * - $node: The node object, if there is an automatically-loaded node associated
++ *   with the page, and the node ID is the second argument in the page's path
++ *   (e.g. node/12345 and node/12345/revisions, but not comment/reply/12345).
+  *
+  * Footer/closing data:
+  * - $feed_icons: A string of all feed icons for the current page.
+  * - $footer_message: The footer message as defined in the admin settings.
+  * - $footer : The footer region.
+  * - $closure: Final closing markup from any modules that have altered the page.
+- *   This variable should always be output last, after all other dynamic content.
++ *   This variable should always be output last, after all other dynamic
++ *   content.
+  *
+  * @see template_preprocess()
+  * @see template_preprocess_page()
+diff --git a/modules/system/system.info b/modules/system/system.info
+index 449cf37..c4213b7 100644
+--- a/modules/system/system.info
++++ b/modules/system/system.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/system/system.install b/modules/system/system.install
+index 316f876..4c92026 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.install,v 1.238.2.23 2010/05/28 11:51:20 goba Exp $
++// $Id: system.install,v 1.238.2.24 2010/08/06 10:54:12 goba Exp $
+ 
+ /**
+  * Test and report Drupal installation requirements.
+@@ -639,7 +639,7 @@ function system_schema() {
+         'not null' => TRUE,
+         'default' => 0),
+       'status' => array(
+-        'description' => 'A flag indicating whether file is temporary (1) or permanent (0).',
++        'description' => 'A flag indicating whether file is temporary (0) or permanent (1).',
+         'type' => 'int',
+         'not null' => TRUE,
+         'default' => 0),
+diff --git a/modules/system/system.module b/modules/system/system.module
+index a8b52ce..e7f8ca6 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: system.module,v 1.585.2.52.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: system.module,v 1.585.2.54 2010/08/11 20:35:48 goba Exp $
+ 
+ /**
+  * @file
+@@ -9,7 +9,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.18');
++define('VERSION', '6.19');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/modules/taxonomy/taxonomy.info b/modules/taxonomy/taxonomy.info
+index 73cc8fc..f07b326 100644
+--- a/modules/taxonomy/taxonomy.info
++++ b/modules/taxonomy/taxonomy.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/taxonomy/taxonomy.module b/modules/taxonomy/taxonomy.module
+index 6a03894..20c367b 100644
+--- a/modules/taxonomy/taxonomy.module
++++ b/modules/taxonomy/taxonomy.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: taxonomy.module,v 1.414.2.14 2010/05/11 10:19:04 goba Exp $
++// $Id: taxonomy.module,v 1.414.2.16 2010/08/06 11:10:57 goba Exp $
+ 
+ /**
+  * @file
+@@ -509,8 +509,9 @@ function taxonomy_form_alter(&$form, $form_state, $form_id) {
+       $terms = empty($node->nid) ? array() : taxonomy_node_get_terms($node);
+     }
+     else {
+-      // After preview the terms must be converted to objects.
+-      if (isset($form_state['node_preview'])) {
++      // After a preview or form reload, the terms must be converted to objects.
++      reset($node->taxonomy);
++      if (!is_object(current($node->taxonomy))) {
+         $node->taxonomy = taxonomy_preview_terms($node);
+       }
+       $terms = $node->taxonomy;
+@@ -1329,7 +1330,9 @@ function _taxonomy_get_tid_from_term($term) {
+ }
+ 
+ /**
+- * Implode a list of tags of a certain vocabulary into a string.
++ * Implodes a list of tags of a certain vocabulary into a string.
++ *
++ * @see drupal_explode_tags()
+  */
+ function taxonomy_implode_tags($tags, $vid = NULL) {
+   $typed_tags = array();
+diff --git a/modules/throttle/throttle.info b/modules/throttle/throttle.info
+index 425462c..116e7e4 100644
+--- a/modules/throttle/throttle.info
++++ b/modules/throttle/throttle.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/tracker/tracker.info b/modules/tracker/tracker.info
+index 14bcc81..cd833ad 100644
+--- a/modules/tracker/tracker.info
++++ b/modules/tracker/tracker.info
+@@ -7,7 +7,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/translation/translation.info b/modules/translation/translation.info
+index 50f4cb8..2a7ee81 100644
+--- a/modules/translation/translation.info
++++ b/modules/translation/translation.info
+@@ -7,7 +7,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/trigger/trigger.admin.inc b/modules/trigger/trigger.admin.inc
+index c8cb387..d329b11 100644
+--- a/modules/trigger/trigger.admin.inc
++++ b/modules/trigger/trigger.admin.inc
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: trigger.admin.inc,v 1.5.4.1 2010/08/11 20:22:27 goba Exp $
++// $Id: trigger.admin.inc,v 1.5.2.1 2010/08/11 20:35:48 goba Exp $
+ 
+ /**
+  * @file
+diff --git a/modules/trigger/trigger.info b/modules/trigger/trigger.info
+index e276335..6e35a6f 100644
+--- a/modules/trigger/trigger.info
++++ b/modules/trigger/trigger.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/trigger/trigger.module b/modules/trigger/trigger.module
+index e913a9d..8a64381 100644
+--- a/modules/trigger/trigger.module
++++ b/modules/trigger/trigger.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: trigger.module,v 1.13.2.3 2009/06/08 16:34:57 goba Exp $
++// $Id: trigger.module,v 1.13.2.4 2010/06/30 09:38:50 goba Exp $
+ 
+ /**
+  * @file
+@@ -105,6 +105,7 @@ function trigger_menu() {
+       'title' => $nice_name,
+       'page callback' => 'trigger_assign',
+       'page arguments' => array($module),
++      'access callback' => 'trigger_access_check',
+       'access arguments' => array($module),
+       'type' => MENU_LOCAL_TASK,
+       'file' => 'trigger.admin.inc',
+diff --git a/modules/update/update.info b/modules/update/update.info
+index be324a5..7f8f24d 100644
+--- a/modules/update/update.info
++++ b/modules/update/update.info
+@@ -6,7 +6,7 @@ package = Core - optional
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/upload/upload.info b/modules/upload/upload.info
+index 9801c35..0e80e0d 100644
+--- a/modules/upload/upload.info
++++ b/modules/upload/upload.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/upload/upload.module b/modules/upload/upload.module
+index 00d0c79..4c508bc 100644
+--- a/modules/upload/upload.module
++++ b/modules/upload/upload.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: upload.module,v 1.197.2.6.2.1 2010/08/11 20:22:27 goba Exp $
++// $Id: upload.module,v 1.197.2.7 2010/08/11 20:35:48 goba Exp $
+ 
+ /**
+  * @file
+diff --git a/modules/user/user.info b/modules/user/user.info
+index 8805843..97d8b24 100644
+--- a/modules/user/user.info
++++ b/modules/user/user.info
+@@ -6,7 +6,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/modules/user/user.module b/modules/user/user.module
+index 11fc9a3..8ebbca3 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: user.module,v 1.892.2.25 2010/06/02 12:47:58 goba Exp $
++// $Id: user.module,v 1.892.2.27 2010/08/06 11:58:09 goba Exp $
+ 
+ /**
+  * @file
+@@ -235,7 +235,7 @@ function user_save($account, $array = array(), $category = 'account') {
+           if ($value === NULL) {
+             unset($data[$key]);
+           }
+-          else {
++          elseif (!empty($key)) {
+             $data[$key] = $value;
+           }
+         }
+@@ -2529,3 +2529,18 @@ function _user_forms(&$edit, $account, $category, $hook = 'form') {
+ 
+   return empty($groups) ? FALSE : $groups;
+ }
++
++/**
++ * Prepare a destination query string for use in combination with drupal_goto().
++ *
++ * Used to direct the user back to the referring page after completing
++ * the openid login.  This function prevents the login page from being
++ * returned because that page will give an access denied message to an
++ * authenticated user.
++ *
++ * @see drupal_get_destination()
++ */
++function user_login_destination() {
++  $destination = drupal_get_destination();
++  return $destination == 'destination=user%2Flogin' ? 'destination=user' : $destination;
++}
+diff --git a/sites/default/default.settings.php b/sites/default/default.settings.php
+index 123ebf8..f04f552 100644
+--- a/sites/default/default.settings.php
++++ b/sites/default/default.settings.php
+@@ -250,8 +250,3 @@ ini_set('url_rewriter.tags',        '');
+  * threshold has elapsed since installation.
+  */
+ # $conf['pressflow_smart_start'] = TRUE;
+-
+-$GLOBALS['simpletest_installed'] = TRUE;
+-if (preg_match("/^simpletest\d+$/", $_SERVER['HTTP_USER_AGENT'])) {
+-  $db_prefix = $_SERVER['HTTP_USER_AGENT'];
+-}
+diff --git a/themes/bluemarine/bluemarine.info b/themes/bluemarine/bluemarine.info
+index 6eee285..16cdc60 100644
+--- a/themes/bluemarine/bluemarine.info
++++ b/themes/bluemarine/bluemarine.info
+@@ -6,7 +6,7 @@ core = 6.x
+ engine = phptemplate
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/themes/chameleon/chameleon.info b/themes/chameleon/chameleon.info
+index 7a49a69..3816cc5 100644
+--- a/themes/chameleon/chameleon.info
++++ b/themes/chameleon/chameleon.info
+@@ -13,7 +13,7 @@ version = VERSION
+ core = 6.x
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/themes/chameleon/marvin/marvin.info b/themes/chameleon/marvin/marvin.info
+index 188b9eb..22ffdca 100644
+--- a/themes/chameleon/marvin/marvin.info
++++ b/themes/chameleon/marvin/marvin.info
+@@ -8,7 +8,7 @@ core = 6.x
+ base theme = chameleon
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/themes/garland/garland.info b/themes/garland/garland.info
+index 8199077..0393f58 100644
+--- a/themes/garland/garland.info
++++ b/themes/garland/garland.info
+@@ -8,7 +8,7 @@ stylesheets[all][] = style.css
+ stylesheets[print][] = print.css
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/themes/garland/minnelli/minnelli.info b/themes/garland/minnelli/minnelli.info
+index 9b59c2b..3969e9b 100644
+--- a/themes/garland/minnelli/minnelli.info
++++ b/themes/garland/minnelli/minnelli.info
+@@ -7,7 +7,7 @@ base theme = garland
+ stylesheets[all][] = minnelli.css
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
+diff --git a/themes/garland/print.css b/themes/garland/print.css
+index 027e315..41ff2fe 100644
+--- a/themes/garland/print.css
++++ b/themes/garland/print.css
+@@ -1,4 +1,4 @@
+-/* $Id: print.css,v 1.3 2007/09/06 21:23:32 goba Exp $ */
++/* $Id: print.css,v 1.3.2.1 2010/08/06 11:37:38 goba Exp $ */
+ 
+ /**
+  * Garland, for Drupal 5.0
+@@ -19,7 +19,7 @@ ul.primary-links, ul.secondary-links,
+   display: none;
+ }
+ 
+-body.sidebars, body.sideber-left, body.sidebar-right, body {
++body.sidebars, body.sidebar-left, body.sidebar-right, body {
+   width: 640px;
+ }
+ 
+diff --git a/themes/pushbutton/pushbutton.info b/themes/pushbutton/pushbutton.info
+index 79ecbd6..a5c40fe 100644
+--- a/themes/pushbutton/pushbutton.info
++++ b/themes/pushbutton/pushbutton.info
+@@ -6,7 +6,7 @@ core = 6.x
+ engine = phptemplate
+ 
+ ; Information added by drupal.org packaging script on 2010-08-11
+-version = "6.18"
++version = "6.19"
+ project = "drupal"
+-datestamp = "1281558392"
++datestamp = "1281559292"
+ 
