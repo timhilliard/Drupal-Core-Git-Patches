@@ -23,5 +23,5 @@ Step-by-Step
 7.  Optional: If you are doing multiple steps and want to be able to go back, it helps to create a git tag, git tag -a v# -m "Message" 
 8.  Optional: If you are doing multiple steps, commit to SVN repo.
 9.  Optional: Rinse and repeat 5-7 for subsequent updates.
-7.  Optional: Remove .git folder (from docroot): rm -r .git.  SVN will simply ignore the folder if you never add it.
-4.  If your docroot is a part of a larger git-controlled group of folders, at this point, you need to add and commit files changed/added by the patch: 'git add .' and 'git commit -m "commit message"
+10.  Optional: Remove .git folder (from docroot): rm -r .git.  SVN will simply ignore the folder if you never add it.
+11.  If your docroot is a part of a larger git-controlled group of folders, at this point, you need to add and commit files changed/added by the patch: 'git add .' and 'git commit -m "commit message"
