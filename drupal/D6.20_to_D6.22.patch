@@ -1,0 +1,3901 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index a7eb7a8..8f6f713 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,14 @@
+-// $Id$
++
++Drupal 6.22, 2011-05-25
++----------------------
++- Made Drupal 6 work better with IIS and Internet Explorer.
++- Fixed .po file imports to work better with custom textgroups.
++- Improved code documentation at various places.
++- Fixed a variety of other bugs.
++
++Drupal 6.21, 2011-05-25
++----------------------
++- Fixed security issues (Cross site scripting), see SA-CORE-2011-001.
+ 
+ Drupal 6.20, 2010-12-15
+ ----------------------
+diff --git a/COPYRIGHT.txt b/COPYRIGHT.txt
+index 7a4ad10..94bfd61 100644
+--- a/COPYRIGHT.txt
++++ b/COPYRIGHT.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ All Drupal code is Copyright 2001 - 2010 by the original authors.
+ 
+diff --git a/INSTALL.mysql.txt b/INSTALL.mysql.txt
+index ae50ebb..5383c72 100644
+--- a/INSTALL.mysql.txt
++++ b/INSTALL.mysql.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ CREATE THE MySQL DATABASE
+ --------------------------
+diff --git a/INSTALL.pgsql.txt b/INSTALL.pgsql.txt
+index 2070547..7054c16 100644
+--- a/INSTALL.pgsql.txt
++++ b/INSTALL.pgsql.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ CREATE THE PostgreSQL DATABASE
+ ------------------------------
+diff --git a/INSTALL.txt b/INSTALL.txt
+index b82651f..44e12c6 100644
+--- a/INSTALL.txt
++++ b/INSTALL.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ CONTENTS OF THIS FILE
+ ---------------------
+diff --git a/LICENSE.txt b/LICENSE.txt
+index 8d7df75..d511905 100644
+--- a/LICENSE.txt
++++ b/LICENSE.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 		    GNU GENERAL PUBLIC LICENSE
+ 		       Version 2, June 1991
+ 
+diff --git a/MAINTAINERS.txt b/MAINTAINERS.txt
+index 9e68124..9c09f88 100644
+--- a/MAINTAINERS.txt
++++ b/MAINTAINERS.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ List of maintainers
+ --------------------------------------------------------------------------------
+diff --git a/UPGRADE.txt b/UPGRADE.txt
+index f4bd010..4a1ac70 100644
+--- a/UPGRADE.txt
++++ b/UPGRADE.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ UPGRADING
+ ---------
+diff --git a/cron.php b/cron.php
+index f242ee7..79fd238 100644
+--- a/cron.php
++++ b/cron.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/actions.inc b/includes/actions.inc
+index a06a196..f997535 100644
+--- a/includes/actions.inc
++++ b/includes/actions.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/batch.inc b/includes/batch.inc
+index 981f726..13e8500 100644
+--- a/includes/batch.inc
++++ b/includes/batch.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file Batch processing API for processes to run in multiple HTTP requests.
+@@ -245,7 +244,7 @@ function _batch_process() {
+       '@percentage' => $percentage,
+       );
+     $message = strtr($progress_message, $values) .'<br/>';
+-    $message .= $task_message ? $task_message : '&nbsp';
++    $message .= $task_message ? $task_message : '&nbsp;';
+ 
+     return array($percentage, $message);
+   }
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index 01ae311..92e0c0f 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/cache-install.inc b/includes/cache-install.inc
+index cd7c481..b7809fe 100644
+--- a/includes/cache-install.inc
++++ b/includes/cache-install.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * A stub cache implementation to be used during the installation
+diff --git a/includes/cache.inc b/includes/cache.inc
+index 8064500..c02b063 100644
+--- a/includes/cache.inc
++++ b/includes/cache.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Return data from the persistent cache. Data may be stored as either plain text or as serialized data.
+diff --git a/includes/common.inc b/includes/common.inc
+index cf70d22..dfd6c4f 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -201,7 +200,7 @@ function drupal_get_feeds($delimiter = "\n") {
+ }
+ 
+ /**
+- * @name HTTP handling
++ * @defgroup http_handling HTTP handling
+  * @{
+  * Functions to properly handle HTTP responses.
+  */
+@@ -653,7 +652,7 @@ function drupal_error_handler($errno, $message, $filename, $line, $context) {
+       }
+     }
+ 
+-    $entry = $types[$errno] .': '. $message .' in '. $filename .' on line '. $line .'.';
++    $entry = check_plain($types[$errno]) .': '. filter_xss($message) .' in '. check_plain($filename) .' on line '. check_plain($line) .'.';
+ 
+     // Force display of error messages in update.php.
+     if (variable_get('error_level', 1) == 1 || strstr($_SERVER['SCRIPT_NAME'], 'update.php')) {
+@@ -1639,7 +1638,8 @@ function drupal_page_footer() {
+  *   A linear array.
+  * @param $function
+  *   A name of a function to apply to all values before output.
+- * @result
++ *
++ * @return
+  *   An associative array.
+  */
+ function drupal_map_assoc($array, $function = NULL) {
+diff --git a/includes/database.inc b/includes/database.inc
+index e8065a8..683ae69 100644
+--- a/includes/database.inc
++++ b/includes/database.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/database.mysql-common.inc b/includes/database.mysql-common.inc
+index cfcdcf0..e3e0d85 100644
+--- a/includes/database.mysql-common.inc
++++ b/includes/database.mysql-common.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -290,7 +289,7 @@ function db_drop_table(&$ret, $table) {
+  *   table along with adding the field. The format is the same as a
+  *   table specification but without the 'fields' element.  If you are
+  *   adding a type 'serial' field, you MUST specify at least one key
+- *   or index including it in this array. @see db_change_field for more
++ *   or index including it in this array. See db_change_field() for more
+  *   explanation why.
+  */
+ function db_add_field(&$ret, $table, $field, $spec, $keys_new = array()) {
+diff --git a/includes/database.mysql.inc b/includes/database.mysql.inc
+index 2ec9ee4..01a7d17 100644
+--- a/includes/database.mysql.inc
++++ b/includes/database.mysql.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/database.mysqli.inc b/includes/database.mysqli.inc
+index dc66329..613ff9e 100644
+--- a/includes/database.mysqli.inc
++++ b/includes/database.mysqli.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/database.pgsql.inc b/includes/database.pgsql.inc
+index 0d6f309..5fb0ccc 100644
+--- a/includes/database.pgsql.inc
++++ b/includes/database.pgsql.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -662,7 +661,7 @@ function db_drop_table(&$ret, $table) {
+  *   table along with adding the field. The format is the same as a
+  *   table specification but without the 'fields' element.  If you are
+  *   adding a type 'serial' field, you MUST specify at least one key
+- *   or index including it in this array. @see db_change_field for more
++ *   or index including it in this array. See db_change_field() for more
+  *   explanation why.
+  */
+ function db_add_field(&$ret, $table, $field, $spec, $new_keys = array()) {
+diff --git a/includes/file.inc b/includes/file.inc
+index b576a21..f9c38b2 100644
+--- a/includes/file.inc
++++ b/includes/file.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -83,17 +82,28 @@ function file_create_path($dest = 0) {
+ }
+ 
+ /**
+- * Check that the directory exists and is writable. Directories need to
+- * have execute permissions to be considered a directory by FTP servers, etc.
++ * Checks whether a directory exists and is writable.
+  *
+- * @param $directory A string containing the name of a directory path.
+- * @param $mode A Boolean value to indicate if the directory should be created
+- *   if it does not exist or made writable if it is read-only.
+- * @param $form_item An optional string containing the name of a form item that
+- *   any errors will be attached to. This is useful for settings forms that
+- *   require the user to specify a writable directory. If it can't be made to
+- *   work, a form error will be set preventing them from saving the settings.
+- * @return FALSE when directory not found, or TRUE when directory exists.
++ * Furthermore, the directory can optionally be created if it does not exist,
++ * and/or be set to writable if it is currently not. Directories need to have
++ * execute permission to be considered a directory by FTP servers.
++ *
++ * @param $directory
++ *   A string representing the directory path.
++ * @param $mode
++ *   An optional bitmask containing the actions, if any, to be carried out on
++ *   the directory. Any combination of the actions FILE_CREATE_DIRECTORY and
++ *   FILE_MODIFY_PERMISSIONS is allowed.
++ * @param $form_item
++ *   An optional string containing the name of a form item that any errors
++ *   will be attached to. Useful when the function validates a directory path
++ *   entered as a form value. An error will consequently prevent form submit
++ *   handlers from running, and instead display the form along with the
++ *   error messages.
++ *
++ * @return
++ *   FALSE if the directory does not exist or is not writable, even after
++ *   any optional actions have been carried out. Otherwise, TRUE is returned.
+  */
+ function file_check_directory(&$directory, $mode = 0, $form_item = NULL) {
+   $directory = rtrim($directory, '/\\');
+@@ -658,9 +668,12 @@ function file_validate_name_length($file) {
+  * @param $file
+  *   A Drupal file object.
+  * @param $extensions
+- *   A string with a space separated
++ *   A string with a space separated list of allowed file extensions, not
++ *   including the period. For example, 'bmp jpg gif png'.
++ *
+  * @return
+- *   An array. If the file extension is not allowed, it will contain an error message.
++ *   An array. If the file extension is not allowed, it will contain an error
++ *   message.
+  */
+ function file_validate_extensions($file, $extensions) {
+   global $user;
+@@ -841,6 +854,14 @@ function file_transfer($source, $headers) {
+   if (ob_get_level()) {
+     ob_end_clean();
+   }
++  
++  // IE cannot download private files because it cannot store files downloaded
++  // over https in the browser cache. The problem can be solved by sending
++  // custom headers to IE. See http://support.microsoft.com/kb/323308/en-us
++  if (isset($_SERVER['HTTPS']) && ($_SERVER['HTTPS'] == 'on')) {
++    drupal_set_header('Cache-Control: private');
++    drupal_set_header('Pragma: private');
++  }
+ 
+   foreach ($headers as $header) {
+     // To prevent HTTP header injection, we delete new lines that are
+diff --git a/includes/form.inc b/includes/form.inc
+index 6432cab..b19d33d 100644
+--- a/includes/form.inc
++++ b/includes/form.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @defgroup forms Form builder functions
+diff --git a/includes/image.gd.inc b/includes/image.gd.inc
+index de887e3..a62dbda 100644
+--- a/includes/image.gd.inc
++++ b/includes/image.gd.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/image.inc b/includes/image.inc
+index 507594b..1580d31 100644
+--- a/includes/image.inc
++++ b/includes/image.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -114,7 +113,9 @@ function image_toolkit_invoke($method, $params = array()) {
+  *    'file_size' - File size in bytes.
+  */
+ function image_get_info($file) {
+-  if (!is_file($file) && !is_uploaded_file($filepath)) {
++  // Proceed no further if this file doesn't exist. Some web servers (IIS) may
++  // not pass is_file() for newly uploaded files, so we need two checks here.
++  if (!is_file($file) && !is_uploaded_file($file)) {
+     return FALSE;
+   }
+ 
+diff --git a/includes/install.inc b/includes/install.inc
+index 53d225d..2ee29ba 100644
+--- a/includes/install.inc
++++ b/includes/install.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ define('SCHEMA_UNINSTALLED', -1);
+ define('SCHEMA_INSTALLED', 0);
+diff --git a/includes/install.mysql.inc b/includes/install.mysql.inc
+index dc26852..e544294 100644
+--- a/includes/install.mysql.inc
++++ b/includes/install.mysql.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ // MySQL specific install functions
+ 
+diff --git a/includes/install.mysqli.inc b/includes/install.mysqli.inc
+index 6de5fd26..8920d01 100644
+--- a/includes/install.mysqli.inc
++++ b/includes/install.mysqli.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ // MySQLi specific install functions
+ 
+diff --git a/includes/install.pgsql.inc b/includes/install.pgsql.inc
+index f03159e..fde97a3 100644
+--- a/includes/install.pgsql.inc
++++ b/includes/install.pgsql.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ // PostgreSQL specific install functions
+ 
+diff --git a/includes/language.inc b/includes/language.inc
+index 0091902..0409766 100644
+--- a/includes/language.inc
++++ b/includes/language.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/locale.inc b/includes/locale.inc
+index 83b162f..1bf7a0a 100644
+--- a/includes/locale.inc
++++ b/includes/locale.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -1672,7 +1671,7 @@ function _locale_import_shorten_comments($comment) {
+       break;
+     }
+   }
+-  return substr($comm, 0, -2);
++  return trim(substr($comm, 0, -2));
+ }
+ 
+ /**
+diff --git a/includes/lock.inc b/includes/lock.inc
+index 7d486e3..0bc6786 100644
+--- a/includes/lock.inc
++++ b/includes/lock.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/mail.inc b/includes/mail.inc
+index 8f0e244..a778ac5 100644
+--- a/includes/mail.inc
++++ b/includes/mail.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Compose and optionally send an e-mail message.
+diff --git a/includes/menu.inc b/includes/menu.inc
+index 9d15aef..d23edd0 100644
+--- a/includes/menu.inc
++++ b/includes/menu.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -72,7 +71,7 @@
+  */
+ 
+ /**
+- * @name Menu flags
++ * @defgroup menu_flags Menu flags
+  * @{
+  * Flags for use in the "type" attribute of menu items.
+  */
+@@ -90,8 +89,10 @@ define('MENU_IS_LOCAL_TASK', 0x0080);
+  */
+ 
+ /**
+- * @name Menu item types
++ * @defgroup menu_item_types Menu item types
+  * @{
++ * Definitions for various menu item types.
++ *
+  * Menu item definitions provide one of these constants, which are shortcuts for
+  * combinations of the above flags.
+  */
+@@ -135,7 +136,7 @@ define('MENU_DEFAULT_LOCAL_TASK', MENU_IS_LOCAL_TASK | MENU_LINKS_TO_PARENT);
+  */
+ 
+ /**
+- * @name Menu status codes
++ * @defgroup menu_status_codes Menu status codes
+  * @{
+  * Status codes for menu callbacks.
+  */
+@@ -150,9 +151,9 @@ define('MENU_SITE_OFFLINE', 4);
+  */
+ 
+ /**
+- * @Name Menu tree parameters
++ * @defgroup menu_tree_parameters Menu tree parameters
+  * @{
+- * Menu tree
++ * Parameters for a menu tree.
+  */
+ 
+  /**
+diff --git a/includes/module.inc b/includes/module.inc
+index df914d0..bc4fbea 100644
+--- a/includes/module.inc
++++ b/includes/module.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/pager.inc b/includes/pager.inc
+index 340fd8f..8d51439 100644
+--- a/includes/pager.inc
++++ b/includes/pager.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -216,10 +215,11 @@ function theme_pager($tags = array(), $limit = 10, $element = 0, $parameters = a
+ 
+ 
+ /**
+- * @name Pager pieces
++ * @defgroup pagerpieces Pager pieces
+  * @{
+- * Use these pieces to construct your own custom pagers in your theme. Note that
+- * you should NOT modify this file to customize your pager.
++ * Theme functions for customizing pager elements.
++ *
++ * Note that you should NOT modify this file to customize your pager.
+  */
+ 
+ /**
+diff --git a/includes/path.inc b/includes/path.inc
+index 16bef2e..8ed5754 100644
+--- a/includes/path.inc
++++ b/includes/path.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/session.inc b/includes/session.inc
+index ebba273..eaf6fc5 100644
+--- a/includes/session.inc
++++ b/includes/session.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/tablesort.inc b/includes/tablesort.inc
+index 9249be7..3d9fb43 100644
+--- a/includes/tablesort.inc
++++ b/includes/tablesort.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/theme.inc b/includes/theme.inc
+index e32732d..8623f90 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -12,14 +11,27 @@
+  */
+ 
+ /**
+- * @name Content markers
++ * @defgroup content_flags Content markers
+  * @{
+  * Markers used by theme_mark() and node_mark() to designate content.
+  * @see theme_mark(), node_mark()
+  */
+-define('MARK_READ',    0);
+-define('MARK_NEW',     1);
++
++/**
++ * Mark content as read.
++ */
++define('MARK_READ', 0);
++
++/**
++ * Mark content as being new.
++ */
++define('MARK_NEW', 1);
++
++/**
++ * Mark content as being updated.
++ */
+ define('MARK_UPDATED', 2);
++
+ /**
+  * @} End of "Content markers".
+  */
+diff --git a/includes/theme.maintenance.inc b/includes/theme.maintenance.inc
+index 9bd20cc..9496f38 100644
+--- a/includes/theme.maintenance.inc
++++ b/includes/theme.maintenance.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/unicode.inc b/includes/unicode.inc
+index 311eaff..228981b 100644
+--- a/includes/unicode.inc
++++ b/includes/unicode.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Indicates an error during check for PHP unicode support.
+diff --git a/includes/xmlrpc.inc b/includes/xmlrpc.inc
+index 445fa26..13ebf09 100644
+--- a/includes/xmlrpc.inc
++++ b/includes/xmlrpc.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/includes/xmlrpcs.inc b/includes/xmlrpcs.inc
+index a0fb7ea..049a92b 100644
+--- a/includes/xmlrpcs.inc
++++ b/includes/xmlrpcs.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * The main entry point for XML-RPC requests.
+diff --git a/index.php b/index.php
+index 4fef70c..cc50460 100644
+--- a/index.php
++++ b/index.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/install.php b/install.php
+index 6022170..8cac289 100644
+--- a/install.php
++++ b/install.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ require_once './includes/install.inc';
+ 
+diff --git a/misc/ahah.js b/misc/ahah.js
+index a098add..118c4de 100644
+--- a/misc/ahah.js
++++ b/misc/ahah.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Provides AJAX-like page updating via AHAH (Asynchronous HTML and HTTP).
+diff --git a/misc/autocomplete.js b/misc/autocomplete.js
+index 4741de7..8d0dcbe 100644
+--- a/misc/autocomplete.js
++++ b/misc/autocomplete.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Attaches the autocomplete behavior to all required fields
+diff --git a/misc/batch.js b/misc/batch.js
+index 5a5587a..fe01554 100644
+--- a/misc/batch.js
++++ b/misc/batch.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Attaches the batch behavior to progress bars.
+diff --git a/misc/collapse.js b/misc/collapse.js
+index 5628c4b..9581db9 100644
+--- a/misc/collapse.js
++++ b/misc/collapse.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Toggle the visibility of a fieldset using smooth animations
+diff --git a/misc/drupal.js b/misc/drupal.js
+index a62038a..c140c7c 100644
+--- a/misc/drupal.js
++++ b/misc/drupal.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ var Drupal = Drupal || { 'settings': {}, 'behaviors': {}, 'themes': {}, 'locale': {} };
+ 
+diff --git a/misc/farbtastic/farbtastic.css b/misc/farbtastic/farbtastic.css
+index 9fe6f8f..6942070 100644
+--- a/misc/farbtastic/farbtastic.css
++++ b/misc/farbtastic/farbtastic.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .farbtastic {
+   position: relative;
+diff --git a/misc/farbtastic/farbtastic.js b/misc/farbtastic/farbtastic.js
+index 1030873..0094a72 100644
+--- a/misc/farbtastic/farbtastic.js
++++ b/misc/farbtastic/farbtastic.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ // Farbtastic 1.2
+ 
+ jQuery.fn.farbtastic = function (callback) {
+diff --git a/misc/form.js b/misc/form.js
+index f5e3e68..3b0bb9c 100644
+--- a/misc/form.js
++++ b/misc/form.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.behaviors.multiselectSelector = function() {
+   // Automatically selects the right radio button in a multiselect control.
+diff --git a/misc/jquery.form.js b/misc/jquery.form.js
+index a952bb7..9e956e3 100644
+--- a/misc/jquery.form.js
++++ b/misc/jquery.form.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /*
+  * jQuery Form Plugin
+diff --git a/misc/jquery.js b/misc/jquery.js
+index 308165e..01aa089 100644
+--- a/misc/jquery.js
++++ b/misc/jquery.js
+@@ -1,4 +1,3 @@
+-// $Id$ 
+ 
+ /*
+  * jQuery 1.2.6 - New Wave Javascript
+diff --git a/misc/print-rtl.css b/misc/print-rtl.css
+index ee496e4..f99287a 100644
+--- a/misc/print-rtl.css
++++ b/misc/print-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   direction: rtl;
+diff --git a/misc/print.css b/misc/print.css
+index 894f6e4..0a56ef1 100644
+--- a/misc/print.css
++++ b/misc/print.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   margin: 1em;
+diff --git a/misc/progress.js b/misc/progress.js
+index 4a7ee3c..b588948 100644
+--- a/misc/progress.js
++++ b/misc/progress.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * A progressbar object. Initialized with the given id. Must be inserted into
+diff --git a/misc/tabledrag.js b/misc/tabledrag.js
+index a69de6c..9916821 100644
+--- a/misc/tabledrag.js
++++ b/misc/tabledrag.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Drag and drop table rows with field manipulation.
+diff --git a/misc/tableheader.js b/misc/tableheader.js
+index 9931c17..9d05e23 100644
+--- a/misc/tableheader.js
++++ b/misc/tableheader.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.tableHeaderDoScroll = function() {
+   if (typeof(Drupal.tableHeaderOnScroll)=='function') {
+diff --git a/misc/tableselect.js b/misc/tableselect.js
+index 65eb7ef..d085a9b 100644
+--- a/misc/tableselect.js
++++ b/misc/tableselect.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.behaviors.tableSelect = function (context) {
+   $('form table:has(th.select-all):not(.tableSelect-processed)', context).each(Drupal.tableSelect);
+diff --git a/misc/teaser.js b/misc/teaser.js
+index 46404ef..da1acfb 100644
+--- a/misc/teaser.js
++++ b/misc/teaser.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Auto-attach for teaser behavior.
+diff --git a/misc/textarea.js b/misc/textarea.js
+index 2e64582..067586b 100644
+--- a/misc/textarea.js
++++ b/misc/textarea.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.behaviors.textarea = function(context) {
+   $('textarea.resizable:not(.textarea-processed)', context).each(function() {
+diff --git a/modules/aggregator/aggregator-feed-source.tpl.php b/modules/aggregator/aggregator-feed-source.tpl.php
+index 77bb51e..5863fd2 100644
+--- a/modules/aggregator/aggregator-feed-source.tpl.php
++++ b/modules/aggregator/aggregator-feed-source.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file aggregator-feed-source.tpl.php
+diff --git a/modules/aggregator/aggregator-item.tpl.php b/modules/aggregator/aggregator-item.tpl.php
+index 924b8e3..032e034 100644
+--- a/modules/aggregator/aggregator-item.tpl.php
++++ b/modules/aggregator/aggregator-item.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file aggregator-item.tpl.php
+diff --git a/modules/aggregator/aggregator-rtl.css b/modules/aggregator/aggregator-rtl.css
+index 508ca31..ea59ca3 100644
+--- a/modules/aggregator/aggregator-rtl.css
++++ b/modules/aggregator/aggregator-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #aggregator .feed-source .feed-icon {
+   float: left;
+diff --git a/modules/aggregator/aggregator-summary-item.tpl.php b/modules/aggregator/aggregator-summary-item.tpl.php
+index 6e68dfc..08ba2ab 100644
+--- a/modules/aggregator/aggregator-summary-item.tpl.php
++++ b/modules/aggregator/aggregator-summary-item.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file aggregator-summary-item.tpl.php
+diff --git a/modules/aggregator/aggregator-summary-items.tpl.php b/modules/aggregator/aggregator-summary-items.tpl.php
+index 135e01b..43a10d3 100644
+--- a/modules/aggregator/aggregator-summary-items.tpl.php
++++ b/modules/aggregator/aggregator-summary-items.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file aggregator-summary-items.tpl.php
+diff --git a/modules/aggregator/aggregator-wrapper.tpl.php b/modules/aggregator/aggregator-wrapper.tpl.php
+index 652dee2..bb8c8b8 100644
+--- a/modules/aggregator/aggregator-wrapper.tpl.php
++++ b/modules/aggregator/aggregator-wrapper.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file comment-wrapper.tpl.php
+diff --git a/modules/aggregator/aggregator.admin.inc b/modules/aggregator/aggregator.admin.inc
+index a30099b..221d0ab 100644
+--- a/modules/aggregator/aggregator.admin.inc
++++ b/modules/aggregator/aggregator.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/aggregator/aggregator.css b/modules/aggregator/aggregator.css
+index 554de08..9d2f4bd 100644
+--- a/modules/aggregator/aggregator.css
++++ b/modules/aggregator/aggregator.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #aggregator .feed-source .feed-title {
+   margin-top: 0;
+diff --git a/modules/aggregator/aggregator.info b/modules/aggregator/aggregator.info
+index 5697ae3..cd72471 100644
+--- a/modules/aggregator/aggregator.info
++++ b/modules/aggregator/aggregator.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Aggregator
+ description = "Aggregates syndicated content (RSS, RDF, and Atom feeds)."
+ package = Core - optional
+diff --git a/modules/aggregator/aggregator.install b/modules/aggregator/aggregator.install
+index 8a6889a..2e918ed 100644
+--- a/modules/aggregator/aggregator.install
++++ b/modules/aggregator/aggregator.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/aggregator/aggregator.module b/modules/aggregator/aggregator.module
+index 2c0661e..e87b579 100644
+--- a/modules/aggregator/aggregator.module
++++ b/modules/aggregator/aggregator.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -783,6 +782,11 @@ function aggregator_parse_feed(&$data, $feed) {
+       }
+     }
+ 
++    // Resolve dc:creator tag as the item author if author tag is not set.
++    if (empty($item['AUTHOR']) && !empty($item['DC:CREATOR'])) {
++      $item['AUTHOR'] = $item['DC:CREATOR'];
++    }
++
+     // Save this item. Try to avoid duplicate entries as much as possible. If
+     // we find a duplicate entry, we resolve it and pass along its ID is such
+     // that we can update it if needed.
+diff --git a/modules/aggregator/aggregator.pages.inc b/modules/aggregator/aggregator.pages.inc
+index f03af52..fb43a86 100644
+--- a/modules/aggregator/aggregator.pages.inc
++++ b/modules/aggregator/aggregator.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/block/block-admin-display-form.tpl.php b/modules/block/block-admin-display-form.tpl.php
+index 91d8051..3862f4d 100644
+--- a/modules/block/block-admin-display-form.tpl.php
++++ b/modules/block/block-admin-display-form.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file block-admin-display-form.tpl.php
+diff --git a/modules/block/block.admin.inc b/modules/block/block.admin.inc
+index 32fa807..3fd8280 100644
+--- a/modules/block/block.admin.inc
++++ b/modules/block/block.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -386,6 +385,7 @@ function template_preprocess_block_admin_display_form(&$variables) {
+       $variables['form'][$i]['region']['#attributes']['class'] = 'block-region-select block-region-'. $region;
+       $variables['form'][$i]['weight']['#attributes']['class'] = 'block-weight block-weight-'. $region;
+ 
++      $variables['block_listing'][$region][$i] = new stdClass();
+       $variables['block_listing'][$region][$i]->row_class = isset($block['#attributes']['class']) ? $block['#attributes']['class'] : '';
+       $variables['block_listing'][$region][$i]->block_modified = isset($block['#attributes']['class']) && strpos($block['#attributes']['class'], 'block-modified') !== FALSE ? TRUE : FALSE;
+       $variables['block_listing'][$region][$i]->block_title =  drupal_render($block['info']);
+diff --git a/modules/block/block.css b/modules/block/block.css
+index 3d579ee..5ffcc2d 100644
+--- a/modules/block/block.css
++++ b/modules/block/block.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #blocks td.region {
+   font-weight: bold;
+diff --git a/modules/block/block.info b/modules/block/block.info
+index 858e44f..7e92e25 100644
+--- a/modules/block/block.info
++++ b/modules/block/block.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Block
+ description = Controls the boxes that are displayed around the main content.
+ package = Core - required
+diff --git a/modules/block/block.install b/modules/block/block.install
+index 6956136..45d6710 100644
+--- a/modules/block/block.install
++++ b/modules/block/block.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_schema().
+diff --git a/modules/block/block.js b/modules/block/block.js
+index abfe48d..c1b7eb6 100644
+--- a/modules/block/block.js
++++ b/modules/block/block.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Move a block in the blocks table from one region to another via select list.
+diff --git a/modules/block/block.module b/modules/block/block.module
+index cf7ec44..9eecda7 100644
+--- a/modules/block/block.module
++++ b/modules/block/block.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -224,15 +223,22 @@ function block_block($op = 'list', $delta = 0, $edit = array()) {
+ /**
+  * Update the 'blocks' DB table with the blocks currently exported by modules.
+  *
++ * @param $theme
++ *   The theme to rehash blocks for. If not provided, defaults to the currently
++ *   used theme.
++ *
+  * @return
+  *   Blocks currently exported by modules.
+  */
+-function _block_rehash() {
++function _block_rehash($theme = NULL) {
+   global $theme_key;
+ 
+   init_theme();
++  if (!isset($theme)) {
++    $theme = $theme_key;
++  }
+ 
+-  $result = db_query("SELECT * FROM {blocks} WHERE theme = '%s'", $theme_key);
++  $result = db_query("SELECT * FROM {blocks} WHERE theme = '%s'", $theme);
+   $old_blocks = array();
+   while ($old_block = db_fetch_array($result)) {
+     $old_blocks[$old_block['module']][$old_block['delta']] = $old_block;
+@@ -240,7 +246,7 @@ function _block_rehash() {
+ 
+   $blocks = array();
+   // Valid region names for the theme.
+-  $regions = system_region_list($theme_key);
++  $regions = system_region_list($theme);
+ 
+   foreach (module_list() as $module) {
+     $module_blocks = module_invoke($module, 'block', 'list');
+@@ -250,7 +256,7 @@ function _block_rehash() {
+           // If it's a new block, add identifiers.
+           $block['module'] = $module;
+           $block['delta']  = $delta;
+-          $block['theme']  = $theme_key;
++          $block['theme']  = $theme;
+           if (!isset($block['pages'])) {
+             // {block}.pages is type 'text', so it cannot have a
+             // default value, and not null, so we need to provide
+@@ -266,9 +272,13 @@ function _block_rehash() {
+         }
+         else {
+           // If it's an existing block, database settings should overwrite
+-          // the code. But aside from 'info' everything that's definable in
+-          // code is stored in the database and we do not store 'info', so we
+-          // do not need to update the database here.
++          // the code. The only exceptions are 'cache' which is only definable
++          // and updatable in the code, and 'info' which is not stored in
++          // the database.
++          // Update the cache mode only; the other values don't need to change.
++          if (isset($block['cache']) && $block['cache'] != $old_blocks[$module][$delta]['cache']) {
++            db_query("UPDATE {blocks} SET cache = %d WHERE bid = %d", $block['cache'], $old_blocks[$module][$delta]['bid']);
++          }
+           // Add 'info' to this block.
+           $old_blocks[$module][$delta]['info'] = $block['info'];
+           // If the region name does not exist, disable the block and assign it to none.
+@@ -292,13 +302,26 @@ function _block_rehash() {
+   // Remove blocks that are no longer defined by the code from the database.
+   foreach ($old_blocks as $module => $old_module_blocks) {
+     foreach ($old_module_blocks as $delta => $block) {
+-      db_query("DELETE FROM {blocks} WHERE module = '%s' AND delta = '%s' AND theme = '%s'", $module, $delta, $theme_key);
++      db_query("DELETE FROM {blocks} WHERE module = '%s' AND delta = '%s' AND theme = '%s'", $module, $delta, $theme);
+     }
+   }
+   return $blocks;
+ }
+ 
+ /**
++ * Implementation of hook_flush_caches().
++ */
++function block_flush_caches() {
++  // Rehash blocks for active themes. We don't use list_themes() here,
++  // because if MAINTENANCE_MODE is defined it skips reading the database,
++  // and we can't tell which themes are active.
++  $result = db_query("SELECT name FROM {system} WHERE type = 'theme' AND status = 1");
++  while ($theme = db_result($result)) {
++    _block_rehash($theme);
++  }
++}
++
++/**
+  * Returns information from database about a user-created (custom) block.
+  *
+  * @param $bid
+diff --git a/modules/blog/blog.info b/modules/blog/blog.info
+index 3dc8873..a35fd27 100644
+--- a/modules/blog/blog.info
++++ b/modules/blog/blog.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Blog
+ description = Enables keeping easily and regularly updated user web pages or blogs.
+ package = Core - optional
+diff --git a/modules/blog/blog.module b/modules/blog/blog.module
+index 7f18033..4a9788c 100644
+--- a/modules/blog/blog.module
++++ b/modules/blog/blog.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/blog/blog.pages.inc b/modules/blog/blog.pages.inc
+index 5040dd3..3c468f9 100644
+--- a/modules/blog/blog.pages.inc
++++ b/modules/blog/blog.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/blogapi/blogapi.info b/modules/blogapi/blogapi.info
+index d178111..8abffbe 100644
+--- a/modules/blogapi/blogapi.info
++++ b/modules/blogapi/blogapi.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Blog API
+ description = Allows users to post content using applications that support XML-RPC blog APIs.
+ package = Core - optional
+diff --git a/modules/blogapi/blogapi.install b/modules/blogapi/blogapi.install
+index 926cfd6..bd2f67d 100644
+--- a/modules/blogapi/blogapi.install
++++ b/modules/blogapi/blogapi.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/blogapi/blogapi.module b/modules/blogapi/blogapi.module
+index d5101d5..6781382 100644
+--- a/modules/blogapi/blogapi.module
++++ b/modules/blogapi/blogapi.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/book/book-all-books-block.tpl.php b/modules/book/book-all-books-block.tpl.php
+index e3c2d2c..4f8300e 100644
+--- a/modules/book/book-all-books-block.tpl.php
++++ b/modules/book/book-all-books-block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file book-all-books-block.tpl.php
+diff --git a/modules/book/book-export-html.tpl.php b/modules/book/book-export-html.tpl.php
+index 912273f..401c309 100644
+--- a/modules/book/book-export-html.tpl.php
++++ b/modules/book/book-export-html.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file book-export-html.tpl.php
+diff --git a/modules/book/book-navigation.tpl.php b/modules/book/book-navigation.tpl.php
+index 19eab29..9382af6 100644
+--- a/modules/book/book-navigation.tpl.php
++++ b/modules/book/book-navigation.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file book-navigation.tpl.php
+diff --git a/modules/book/book-node-export-html.tpl.php b/modules/book/book-node-export-html.tpl.php
+index 384a426..44cb75f 100644
+--- a/modules/book/book-node-export-html.tpl.php
++++ b/modules/book/book-node-export-html.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file book-node-export-html.tpl.php
+diff --git a/modules/book/book-rtl.css b/modules/book/book-rtl.css
+index f9bcde4..ccac94c 100644
+--- a/modules/book/book-rtl.css
++++ b/modules/book/book-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .book-navigation .page-previous {
+   float: right;
+diff --git a/modules/book/book.admin.inc b/modules/book/book.admin.inc
+index 0a451d7..84cbe13 100644
+--- a/modules/book/book.admin.inc
++++ b/modules/book/book.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/book/book.css b/modules/book/book.css
+index 3f4d90f..3b687b8 100644
+--- a/modules/book/book.css
++++ b/modules/book/book.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .book-navigation .menu {
+   border-top: 1px solid #888;
+diff --git a/modules/book/book.info b/modules/book/book.info
+index ae4e24b..999d68b 100644
+--- a/modules/book/book.info
++++ b/modules/book/book.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Book
+ description = Allows users to structure site pages in a hierarchy or outline.
+ package = Core - optional
+diff --git a/modules/book/book.install b/modules/book/book.install
+index 14be8c1..e3172f8 100644
+--- a/modules/book/book.install
++++ b/modules/book/book.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/book/book.module b/modules/book/book.module
+index 41156a2..966330b 100644
+--- a/modules/book/book.module
++++ b/modules/book/book.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/book/book.pages.inc b/modules/book/book.pages.inc
+index cc9f20c..46eb86a 100644
+--- a/modules/book/book.pages.inc
++++ b/modules/book/book.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -78,8 +77,11 @@ function book_export_html($nid) {
+     if (isset($node->book)) {
+       $tree = book_menu_subtree_data($node->book);
+       $contents = book_export_traverse($tree, 'book_node_export');
++      return theme('book_export_html', $node->title, $contents, $node->book['depth']);
++    }
++    else {
++      drupal_not_found();
+     }
+-    return theme('book_export_html', $node->title, $contents, $node->book['depth']);
+   }
+   else {
+     drupal_access_denied();
+diff --git a/modules/color/color-rtl.css b/modules/color/color-rtl.css
+index 0b3e308..319a634 100644
+--- a/modules/color/color-rtl.css
++++ b/modules/color/color-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #placeholder {
+   left: 0;
+diff --git a/modules/color/color.css b/modules/color/color.css
+index 3e013bf..441961f 100644
+--- a/modules/color/color.css
++++ b/modules/color/color.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /* Farbtastic placement */
+ .color-form {
+diff --git a/modules/color/color.info b/modules/color/color.info
+index 82d04b2..4e8ac66 100644
+--- a/modules/color/color.info
++++ b/modules/color/color.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Color
+ description = Allows the user to change the color scheme of certain themes.
+ package = Core - optional
+diff --git a/modules/color/color.install b/modules/color/color.install
+index 5526ec7..33b1f41 100644
+--- a/modules/color/color.install
++++ b/modules/color/color.install
+@@ -1,5 +1,4 @@
+ <?php
+-/* $Id$ */
+ 
+ function color_requirements($phase) {
+   $requirements = array();
+@@ -33,3 +32,20 @@ function color_requirements($phase) {
+ 
+   return $requirements;
+ }
++
++/**
++ * Warn site administrator if unsafe CSS color codes are found in the database.
++ */
++function color_update_6001() {
++  $ret = array();
++  $result = db_query("SELECT name FROM {variable} WHERE name LIKE 'color_%_palette'");
++  while ($variable = db_fetch_array($result)) {
++    $palette = variable_get($variable['name'], array());
++    foreach ($palette as $key => $color) {
++      if (!preg_match('/^#([a-f0-9]{3}){1,2}$/iD', $color)) {
++        drupal_set_message('Some of the custom CSS color codes specified via the color module are invalid. Please examine the themes which are making use of the color module at the <a href="'. url('admin/appearance/settings') .'">Appearance settings</a> page to verify their CSS color values.', 'warning');
++      }
++    }
++  }
++  return $ret;
++}
+diff --git a/modules/color/color.js b/modules/color/color.js
+index 3814816..e024cf5 100644
+--- a/modules/color/color.js
++++ b/modules/color/color.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.behaviors.color = function (context) {
+   // This behavior attaches by ID, so is only valid once on a page.
+diff --git a/modules/color/color.module b/modules/color/color.module
+index 407a93c..63fad7a 100644
+--- a/modules/color/color.module
++++ b/modules/color/color.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_help().
+@@ -46,6 +45,7 @@ function color_form_alter(&$form, $form_state, $form_id) {
+         '#theme' => 'color_scheme_form',
+       );
+       $form['color'] += color_scheme_form($form_state, arg(4));
++      $form['#validate'][] = 'color_scheme_form_validate';
+       $form['#submit'][] = 'color_scheme_form_submit';
+     }
+   }
+@@ -237,6 +237,18 @@ function theme_color_scheme_form($form) {
+ }
+ 
+ /**
++ * Validation handler for color change form.
++ */
++function color_scheme_form_validate($form, &$form_state) {
++  // Only accept hexadecimal CSS color strings to avoid XSS upon use.
++  foreach ($form_state['values']['palette'] as $key => $color) {
++    if (!preg_match('/^#([a-f0-9]{3}){1,2}$/iD', $color)) {
++      form_set_error('palette][' . $key, t('%name must be a valid hexadecimal CSS color value.', array('%name' => $form['color']['palette'][$key]['#title'])));
++    }
++  }
++}
++
++/**
+  * Submit handler for color change form.
+  */
+ function color_scheme_form_submit($form, &$form_state) {
+diff --git a/modules/comment/comment-folded.tpl.php b/modules/comment/comment-folded.tpl.php
+index 016656b..97f54e3 100644
+--- a/modules/comment/comment-folded.tpl.php
++++ b/modules/comment/comment-folded.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file comment-folded.tpl.php
+diff --git a/modules/comment/comment-rtl.css b/modules/comment/comment-rtl.css
+index 5cef412..39c3929 100644
+--- a/modules/comment/comment-rtl.css
++++ b/modules/comment/comment-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .indented {
+   margin-left: 0;
+diff --git a/modules/comment/comment-wrapper.tpl.php b/modules/comment/comment-wrapper.tpl.php
+index 5a5cc29..6b6defc 100644
+--- a/modules/comment/comment-wrapper.tpl.php
++++ b/modules/comment/comment-wrapper.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file comment-wrapper.tpl.php
+diff --git a/modules/comment/comment.admin.inc b/modules/comment/comment.admin.inc
+index 21f03e8..6212049 100644
+--- a/modules/comment/comment.admin.inc
++++ b/modules/comment/comment.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/comment/comment.css b/modules/comment/comment.css
+index 0df1470..429480f 100644
+--- a/modules/comment/comment.css
++++ b/modules/comment/comment.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .indented {
+   margin-left: 25px; /* LTR */
+diff --git a/modules/comment/comment.info b/modules/comment/comment.info
+index 5d13a6f..983c5a8 100644
+--- a/modules/comment/comment.info
++++ b/modules/comment/comment.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Comment
+ description = Allows users to comment on and discuss published content.
+ package = Core - optional
+diff --git a/modules/comment/comment.install b/modules/comment/comment.install
+index 98949d2..e5ac7d0 100644
+--- a/modules/comment/comment.install
++++ b/modules/comment/comment.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_enable().
+diff --git a/modules/comment/comment.js b/modules/comment/comment.js
+index cb1d1ab..451bc8a 100644
+--- a/modules/comment/comment.js
++++ b/modules/comment/comment.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.behaviors.comment = function (context) {
+   var parts = new Array("name", "homepage", "mail");
+diff --git a/modules/comment/comment.module b/modules/comment/comment.module
+index 0b8ce23..58e9ce6 100644
+--- a/modules/comment/comment.module
++++ b/modules/comment/comment.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/comment/comment.pages.inc b/modules/comment/comment.pages.inc
+index e318fa1..7aec87c 100644
+--- a/modules/comment/comment.pages.inc
++++ b/modules/comment/comment.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/comment/comment.tpl.php b/modules/comment/comment.tpl.php
+index 2207246..9aea1c7 100644
+--- a/modules/comment/comment.tpl.php
++++ b/modules/comment/comment.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file comment.tpl.php
+diff --git a/modules/contact/contact.admin.inc b/modules/contact/contact.admin.inc
+index e83afa4..e7a5def 100644
+--- a/modules/contact/contact.admin.inc
++++ b/modules/contact/contact.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/contact/contact.info b/modules/contact/contact.info
+index 2a2e742..65693d0 100644
+--- a/modules/contact/contact.info
++++ b/modules/contact/contact.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Contact
+ description = Enables the use of both personal and site-wide contact forms.
+ package = Core - optional
+diff --git a/modules/contact/contact.install b/modules/contact/contact.install
+index 559e073..6b67f52 100644
+--- a/modules/contact/contact.install
++++ b/modules/contact/contact.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/contact/contact.module b/modules/contact/contact.module
+index ab369ef..107efc9 100644
+--- a/modules/contact/contact.module
++++ b/modules/contact/contact.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/contact/contact.pages.inc b/modules/contact/contact.pages.inc
+index ac85174..db9c942 100644
+--- a/modules/contact/contact.pages.inc
++++ b/modules/contact/contact.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/dblog/dblog-rtl.css b/modules/dblog/dblog-rtl.css
+index e938aff..60a402d 100644
+--- a/modules/dblog/dblog-rtl.css
++++ b/modules/dblog/dblog-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #edit-type-wrapper, #edit-severity-wrapper {
+   float: right;
+diff --git a/modules/dblog/dblog.admin.inc b/modules/dblog/dblog.admin.inc
+index 45ac998..ee577a4 100644
+--- a/modules/dblog/dblog.admin.inc
++++ b/modules/dblog/dblog.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/dblog/dblog.css b/modules/dblog/dblog.css
+index f293b9f..52f62a4 100644
+--- a/modules/dblog/dblog.css
++++ b/modules/dblog/dblog.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #edit-type-wrapper, #edit-severity-wrapper {
+   float: left; /* LTR */
+diff --git a/modules/dblog/dblog.info b/modules/dblog/dblog.info
+index 4072ad4..af5d0d9 100644
+--- a/modules/dblog/dblog.info
++++ b/modules/dblog/dblog.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Database logging
+ description = Logs and records system events to the database.
+ package = Core - optional
+diff --git a/modules/dblog/dblog.install b/modules/dblog/dblog.install
+index c7bc983..80c4584 100644
+--- a/modules/dblog/dblog.install
++++ b/modules/dblog/dblog.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/dblog/dblog.module b/modules/dblog/dblog.module
+index e5fb88b..4a1326c 100644
+--- a/modules/dblog/dblog.module
++++ b/modules/dblog/dblog.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/filter/filter.admin.inc b/modules/filter/filter.admin.inc
+index d5e3380..36f3d67 100644
+--- a/modules/filter/filter.admin.inc
++++ b/modules/filter/filter.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/filter/filter.info b/modules/filter/filter.info
+index 1f19f76..3201bb1 100644
+--- a/modules/filter/filter.info
++++ b/modules/filter/filter.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Filter
+ description = Handles the filtering of content in preparation for display.
+ package = Core - required
+diff --git a/modules/filter/filter.install b/modules/filter/filter.install
+index 033f8b8..c6dc8ed 100644
+--- a/modules/filter/filter.install
++++ b/modules/filter/filter.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_schema().
+diff --git a/modules/filter/filter.module b/modules/filter/filter.module
+index 7efbe35..49702fe 100644
+--- a/modules/filter/filter.module
++++ b/modules/filter/filter.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -397,10 +396,9 @@ function filter_list_format($format) {
+ }
+ 
+ /**
+- * @name Filtering functions
++ * @defgroup filtering_functions Filtering functions
+  * @{
+- * Modules which need to have content filtered can use these functions to
+- * interact with the filter system.
++ * Functions for interacting with the content filtering system.
+  *
+  * For more info, see the hook_filter() documentation.
+  *
+@@ -604,19 +602,20 @@ function theme_filter_tips_more_info() {
+ }
+ 
+ /**
+- * @name Standard filters
++ * @defgroup standard_filters Standard filters
+  * @{
+  * Filters implemented by the filter.module.
+  */
+ 
+ /**
+- * Implementation of hook_filter(). Contains a basic set of essential filters.
+- * - HTML filter:
+- *     Validates user-supplied HTML, transforming it as necessary.
+- * - Line break converter:
+- *     Converts newlines into paragraph and break tags.
+- * - URL and e-mail address filter:
+- *     Converts newlines into paragraph and break tags.
++ * Implementation of hook_filter().
++ *
++ * Sets up a basic set of essential filters.
++ * - HTML filter: Restricts user-supplied HTML to certain tags, and removes
++ *   dangerous components in allowed tags.
++ * - Line break converter: Converts newlines into paragraph and break tags.
++ * - URL filter: Converts URLs and e-mail addresses into links.
++ * - HTML corrector: Fixes faulty HTML.
+  */
+ function filter_filter($op, $delta = 0, $format = -1, $text = '') {
+   switch ($op) {
+diff --git a/modules/filter/filter.pages.inc b/modules/filter/filter.pages.inc
+index 20c4209..24613fa 100644
+--- a/modules/filter/filter.pages.inc
++++ b/modules/filter/filter.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/forum/forum-icon.tpl.php b/modules/forum/forum-icon.tpl.php
+index 0139063..d2b987a 100644
+--- a/modules/forum/forum-icon.tpl.php
++++ b/modules/forum/forum-icon.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file forum-icon.tpl.php
+diff --git a/modules/forum/forum-list.tpl.php b/modules/forum/forum-list.tpl.php
+index 46dbd5e..c3b809c 100644
+--- a/modules/forum/forum-list.tpl.php
++++ b/modules/forum/forum-list.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file forum-list.tpl.php
+diff --git a/modules/forum/forum-rtl.css b/modules/forum/forum-rtl.css
+index 4f81bde..d31c9e7 100644
+--- a/modules/forum/forum-rtl.css
++++ b/modules/forum/forum-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #forum tr td.forum {
+   padding-left: 0.5em;
+diff --git a/modules/forum/forum-submitted.tpl.php b/modules/forum/forum-submitted.tpl.php
+index dc3a6e4..11a6e91 100644
+--- a/modules/forum/forum-submitted.tpl.php
++++ b/modules/forum/forum-submitted.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file forum-submitted.tpl.php
+diff --git a/modules/forum/forum-topic-list.tpl.php b/modules/forum/forum-topic-list.tpl.php
+index 900b7df..d3e0090 100644
+--- a/modules/forum/forum-topic-list.tpl.php
++++ b/modules/forum/forum-topic-list.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file forum-topic-list.tpl.php
+diff --git a/modules/forum/forum-topic-navigation.tpl.php b/modules/forum/forum-topic-navigation.tpl.php
+index 92b2ff5..1b42b11 100644
+--- a/modules/forum/forum-topic-navigation.tpl.php
++++ b/modules/forum/forum-topic-navigation.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file forum-topic-navigation.tpl.php
+diff --git a/modules/forum/forum.admin.inc b/modules/forum/forum.admin.inc
+index c806159..6eff8b3 100644
+--- a/modules/forum/forum.admin.inc
++++ b/modules/forum/forum.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/forum/forum.css b/modules/forum/forum.css
+index bef5fd4..f4fcc87 100644
+--- a/modules/forum/forum.css
++++ b/modules/forum/forum.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #forum .description {
+   font-size: 0.9em;
+diff --git a/modules/forum/forum.info b/modules/forum/forum.info
+index 00828a4..c7e6d21 100644
+--- a/modules/forum/forum.info
++++ b/modules/forum/forum.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Forum
+ description = Enables threaded discussions about general topics.
+ dependencies[] = taxonomy
+diff --git a/modules/forum/forum.install b/modules/forum/forum.install
+index aa80507..f4c73ae 100644
+--- a/modules/forum/forum.install
++++ b/modules/forum/forum.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index 9c3ca19..1d8f4a4 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -495,11 +494,31 @@ function forum_get_forums($tid = 0) {
+   $_forums = taxonomy_get_tree($vid, $tid);
+ 
+   if (count($_forums)) {
+-
+-    $counts = array();
+-
+-    $sql = "SELECT r.tid, COUNT(n.nid) AS topic_count, SUM(l.comment_count) AS comment_count FROM {node} n INNER JOIN {node_comment_statistics} l ON n.nid = l.nid INNER JOIN {term_node} r ON n.vid = r.vid WHERE n.status = 1 GROUP BY r.tid";
+-    $sql = db_rewrite_sql($sql);
++  $counts = array();
++    $sql = "
++      SELECT r.tid AS tid, n.nid AS nid, l.comment_count AS nid_comment_count
++        FROM {node} n
++        INNER JOIN {node_comment_statistics} l ON n.nid = l.nid
++        INNER JOIN {term_node} r ON n.vid = r.vid
++        WHERE n.status = 1
++        GROUP BY r.tid, n.nid, l.comment_count";
++    $sql_rewritten = db_rewrite_sql($sql);
++    if ($sql_rewritten == $sql) {
++      $sql = "
++        SELECT r.tid, COUNT(n.nid) AS topic_count, SUM(l.comment_count) AS comment_count
++          FROM {node} n
++          INNER JOIN {node_comment_statistics} l ON n.nid = l.nid
++          INNER JOIN {term_node} r ON n.vid = r.vid
++          WHERE n.status = 1
++          GROUP BY r.tid";
++      $sql = db_rewrite_sql($sql);
++    }
++    else {
++      $sql = "
++        SELECT tid, COUNT(nid) AS topic_count, SUM(nid_comment_count) AS comment_count
++          FROM ($sql_rewritten) AS forum_content_list
++          GROUP BY tid";
++    }
+     $_counts = db_query($sql);
+     while ($count = db_fetch_object($_counts)) {
+       $counts[$count->tid] = $count;
+@@ -546,7 +565,7 @@ function forum_get_forums($tid = 0) {
+  * than NODE_NEW_LIMIT.
+  */
+ function _forum_topics_unread($term, $uid) {
+-  $sql = "SELECT COUNT(n.nid) FROM {node} n INNER JOIN {term_node} tn ON n.vid = tn.vid AND tn.tid = %d LEFT JOIN {history} h ON n.nid = h.nid AND h.uid = %d WHERE n.status = 1 AND n.created > %d AND h.nid IS NULL";
++  $sql = "SELECT COUNT(DISTINCT n.nid) FROM {node} n INNER JOIN {term_node} tn ON n.vid = tn.vid AND tn.tid = %d LEFT JOIN {history} h ON n.nid = h.nid AND h.uid = %d WHERE n.status = 1 AND n.created > %d AND h.nid IS NULL";
+   $sql = db_rewrite_sql($sql);
+   return db_result(db_query($sql, $term, $uid, NODE_NEW_LIMIT));
+ }
+@@ -575,7 +594,7 @@ function forum_get_topics($tid, $sortby, $forum_per_page) {
+   $sql .= tablesort_sql($forum_topic_list_header, 'n.sticky DESC,');
+   $sql .= ', n.created DESC';  // Always add a secondary sort order so that the news forum topics are on top.
+ 
+-  $sql_count = db_rewrite_sql("SELECT COUNT(n.nid) FROM {node} n INNER JOIN {term_node} r ON n.vid = r.vid AND r.tid = %d WHERE n.status = 1");
++  $sql_count = db_rewrite_sql("SELECT COUNT(DISTINCT n.nid) FROM {node} n INNER JOIN {term_node} r ON n.vid = r.vid AND r.tid = %d WHERE n.status = 1");
+ 
+   $result = pager_query($sql, $forum_per_page, 0, $sql_count, $tid);
+   $topics = array();
+diff --git a/modules/forum/forum.pages.inc b/modules/forum/forum.pages.inc
+index 4931411..35fbff2 100644
+--- a/modules/forum/forum.pages.inc
++++ b/modules/forum/forum.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/forum/forums.tpl.php b/modules/forum/forums.tpl.php
+index 7c2dbc8..7139bad 100644
+--- a/modules/forum/forums.tpl.php
++++ b/modules/forum/forums.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file forums.tpl.php
+diff --git a/modules/help/help-rtl.css b/modules/help/help-rtl.css
+index 79e99c4..8e40a8c 100644
+--- a/modules/help/help-rtl.css
++++ b/modules/help/help-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .help-items {
+   float: right;
+diff --git a/modules/help/help.admin.inc b/modules/help/help.admin.inc
+index 7b70ce5..87e869d 100644
+--- a/modules/help/help.admin.inc
++++ b/modules/help/help.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/help/help.css b/modules/help/help.css
+index c8062be..9228170 100644
+--- a/modules/help/help.css
++++ b/modules/help/help.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .help-items {
+   float: left; /* LTR */
+diff --git a/modules/help/help.info b/modules/help/help.info
+index ea6dc55..21c1f9e 100644
+--- a/modules/help/help.info
++++ b/modules/help/help.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Help
+ description = Manages the display of online help.
+ package = Core - optional
+diff --git a/modules/help/help.module b/modules/help/help.module
+index 4cdcfeb..3cf1f4e 100644
+--- a/modules/help/help.module
++++ b/modules/help/help.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/locale/locale.css b/modules/locale/locale.css
+index c9c8df5..9f451a7 100644
+--- a/modules/locale/locale.css
++++ b/modules/locale/locale.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .locale-untranslated {
+   font-style: normal;
+diff --git a/modules/locale/locale.info b/modules/locale/locale.info
+index 1d5f2bf..fb2d9a5 100644
+--- a/modules/locale/locale.info
++++ b/modules/locale/locale.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Locale
+ description = Adds language handling functionality and enables the translation of the user interface to languages other than English.
+ package = Core - optional
+diff --git a/modules/locale/locale.install b/modules/locale/locale.install
+index 2246917..9c54105 100644
+--- a/modules/locale/locale.install
++++ b/modules/locale/locale.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/locale/locale.module b/modules/locale/locale.module
+index 9f9665c..092eb48 100644
+--- a/modules/locale/locale.module
++++ b/modules/locale/locale.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/menu/menu.admin.inc b/modules/menu/menu.admin.inc
+index 1092afb..a62f246 100644
+--- a/modules/menu/menu.admin.inc
++++ b/modules/menu/menu.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -410,7 +409,7 @@ function menu_edit_menu(&$form_state, $type, $menu = array()) {
+     $form['menu_name'] = array(
+       '#type' => 'textfield',
+       '#title' => t('Menu name'),
+-      '#maxsize' => MENU_MAX_MENU_NAME_LENGTH_UI,
++      '#maxlength' => MENU_MAX_MENU_NAME_LENGTH_UI,
+       '#description' => t('The machine-readable name of this menu. This text will be used for constructing the URL of the <em>menu overview</em> page for this menu. This name must contain only lowercase letters, numbers, and hyphens, and must be unique.'),
+       '#required' => TRUE,
+     );
+@@ -510,9 +509,6 @@ function menu_edit_menu_validate($form, &$form_state) {
+   if (preg_match('/[^a-z0-9-]/', $item['menu_name'])) {
+     form_set_error('menu_name', t('The menu name may only consist of lowercase letters, numbers, and hyphens.'));
+   }
+-  if (strlen($item['menu_name']) > MENU_MAX_MENU_NAME_LENGTH_UI) {
+-    form_set_error('menu_name', format_plural(MENU_MAX_MENU_NAME_LENGTH_UI, "The menu name can't be longer than 1 character.", "The menu name can't be longer than @count characters."));
+-  }
+   if ($form['#insert']) {
+     // We will add 'menu-' to the menu name to help avoid name-space conflicts.
+     $item['menu_name'] = 'menu-'. $item['menu_name'];
+diff --git a/modules/menu/menu.info b/modules/menu/menu.info
+index 56f8d14..4f21c69 100644
+--- a/modules/menu/menu.info
++++ b/modules/menu/menu.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Menu
+ description = Allows administrators to customize the site navigation menu.
+ package = Core - optional
+diff --git a/modules/menu/menu.install b/modules/menu/menu.install
+index 141283c..3c69c40 100644
+--- a/modules/menu/menu.install
++++ b/modules/menu/menu.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/menu/menu.module b/modules/menu/menu.module
+index 7d7379b..cfe17b1 100644
+--- a/modules/menu/menu.module
++++ b/modules/menu/menu.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -46,7 +45,7 @@ function menu_perm() {
+ function menu_menu() {
+   $items['admin/build/menu'] = array(
+     'title' => 'Menus',
+-    'description' => "Control your site's navigation menu, primary links and secondary links. as well as rename and reorganize menu items.",
++    'description' => "Control your site's navigation menu, primary links and secondary links, as well as rename and reorganize menu items.",
+     'page callback' => 'menu_overview_page',
+     'access callback' => 'user_access',
+     'access arguments' => array('administer menu'),
+diff --git a/modules/node/content_types.inc b/modules/node/content_types.inc
+index b600831..7442949 100644
+--- a/modules/node/content_types.inc
++++ b/modules/node/content_types.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/node/node-rtl.css b/modules/node/node-rtl.css
+index f829ab9..3ecb0ea 100644
+--- a/modules/node/node-rtl.css
++++ b/modules/node/node-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #node-admin-buttons {
+   float: right;
+diff --git a/modules/node/node.admin.inc b/modules/node/node.admin.inc
+index 8c7dd2a..f20c12f 100644
+--- a/modules/node/node.admin.inc
++++ b/modules/node/node.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/node/node.css b/modules/node/node.css
+index 7b56fd7..60d0130 100644
+--- a/modules/node/node.css
++++ b/modules/node/node.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .node-unpublished {
+   background-color: #fff4f4;
+diff --git a/modules/node/node.info b/modules/node/node.info
+index 95ddbe3..4bd95ef 100644
+--- a/modules/node/node.info
++++ b/modules/node/node.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Node
+ description = Allows content to be submitted to the site and displayed on pages.
+ package = Core - required
+diff --git a/modules/node/node.install b/modules/node/node.install
+index 8397986..a0b1ce3 100644
+--- a/modules/node/node.install
++++ b/modules/node/node.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_schema().
+diff --git a/modules/node/node.module b/modules/node/node.module
+index 3e27431..a35aa79 100644
+--- a/modules/node/node.module
++++ b/modules/node/node.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -974,6 +973,7 @@ function node_delete($nid) {
+   if (node_access('delete', $node)) {
+     db_query('DELETE FROM {node} WHERE nid = %d', $node->nid);
+     db_query('DELETE FROM {node_revisions} WHERE nid = %d', $node->nid);
++    db_query('DELETE FROM {node_access} WHERE nid = %d', $node->nid);
+ 
+     // Call the node-specific callback (if any):
+     node_invoke($node, 'delete');
+diff --git a/modules/node/node.pages.inc b/modules/node/node.pages.inc
+index 3a65010..f5bbdfc 100644
+--- a/modules/node/node.pages.inc
++++ b/modules/node/node.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/node/node.tpl.php b/modules/node/node.tpl.php
+index 6fc9674..0ae6fd9 100644
+--- a/modules/node/node.tpl.php
++++ b/modules/node/node.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file node.tpl.php
+diff --git a/modules/openid/openid.css b/modules/openid/openid.css
+index 844696f..900c0d4 100644
+--- a/modules/openid/openid.css
++++ b/modules/openid/openid.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #edit-openid-identifier {
+   background-image: url("login-bg.png");
+diff --git a/modules/openid/openid.inc b/modules/openid/openid.inc
+index 888aaaf..44cdde2 100644
+--- a/modules/openid/openid.inc
++++ b/modules/openid/openid.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/openid/openid.info b/modules/openid/openid.info
+index 015dee6..0c49491 100644
+--- a/modules/openid/openid.info
++++ b/modules/openid/openid.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = OpenID
+ description = "Allows users to log into your site using OpenID."
+ version = VERSION
+diff --git a/modules/openid/openid.install b/modules/openid/openid.install
+index d430258..595310b 100644
+--- a/modules/openid/openid.install
++++ b/modules/openid/openid.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/openid/openid.js b/modules/openid/openid.js
+index bd2948d..ce9de89 100644
+--- a/modules/openid/openid.js
++++ b/modules/openid/openid.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ Drupal.behaviors.openid = function (context) {
+   var $loginElements = $("#edit-name-wrapper, #edit-pass-wrapper, li.openid-link");
+diff --git a/modules/openid/openid.module b/modules/openid/openid.module
+index 7ad94f9..f1885df 100644
+--- a/modules/openid/openid.module
++++ b/modules/openid/openid.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/openid/openid.pages.inc b/modules/openid/openid.pages.inc
+index 79afad8..5ac1671 100644
+--- a/modules/openid/openid.pages.inc
++++ b/modules/openid/openid.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/openid/xrds.inc b/modules/openid/xrds.inc
+index 9558768..36f5282 100644
+--- a/modules/openid/xrds.inc
++++ b/modules/openid/xrds.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ // Global variables to track parsing state
+ $xrds_open_elements = array();
+diff --git a/modules/path/path.admin.inc b/modules/path/path.admin.inc
+index bee4b84..dba0d03 100644
+--- a/modules/path/path.admin.inc
++++ b/modules/path/path.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/path/path.info b/modules/path/path.info
+index 8ba436f..8b9c52a 100644
+--- a/modules/path/path.info
++++ b/modules/path/path.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Path
+ description = Allows users to rename URLs.
+ package = Core - optional
+diff --git a/modules/path/path.module b/modules/path/path.module
+index f7eb8c0..a267fd6 100644
+--- a/modules/path/path.module
++++ b/modules/path/path.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/php/php.info b/modules/php/php.info
+index 2327acc..558d129 100644
+--- a/modules/php/php.info
++++ b/modules/php/php.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = PHP filter
+ description = Allows embedded PHP code/snippets to be evaluated.
+ package = Core - optional
+diff --git a/modules/php/php.install b/modules/php/php.install
+index d5ee4d8..b41d054 100644
+--- a/modules/php/php.install
++++ b/modules/php/php.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/php/php.module b/modules/php/php.module
+index 6ba088f..0533d43 100644
+--- a/modules/php/php.module
++++ b/modules/php/php.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/ping/ping.info b/modules/ping/ping.info
+index c89de3b..c427829 100644
+--- a/modules/ping/ping.info
++++ b/modules/ping/ping.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Ping
+ description = Alerts other sites when your site has been updated.
+ package = Core - optional
+diff --git a/modules/ping/ping.module b/modules/ping/ping.module
+index 6b27077..6553960 100644
+--- a/modules/ping/ping.module
++++ b/modules/ping/ping.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/poll/poll-bar-block.tpl.php b/modules/poll/poll-bar-block.tpl.php
+index ca744d6..d5fbaee 100644
+--- a/modules/poll/poll-bar-block.tpl.php
++++ b/modules/poll/poll-bar-block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file poll-bar-block.tpl.php
+diff --git a/modules/poll/poll-bar.tpl.php b/modules/poll/poll-bar.tpl.php
+index 54a7999..cb4dbc8 100644
+--- a/modules/poll/poll-bar.tpl.php
++++ b/modules/poll/poll-bar.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file poll-bar.tpl.php
+diff --git a/modules/poll/poll-results-block.tpl.php b/modules/poll/poll-results-block.tpl.php
+index 0d2d62d..12ec6d9 100644
+--- a/modules/poll/poll-results-block.tpl.php
++++ b/modules/poll/poll-results-block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ /**
+  * @file poll-results-block.tpl.php
+  * Display the poll results in a block.
+diff --git a/modules/poll/poll-results.tpl.php b/modules/poll/poll-results.tpl.php
+index 670a50a..bb57f12 100644
+--- a/modules/poll/poll-results.tpl.php
++++ b/modules/poll/poll-results.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file poll-results-block.tpl.php
+diff --git a/modules/poll/poll-rtl.css b/modules/poll/poll-rtl.css
+index f81ef34..14d42e6 100644
+--- a/modules/poll/poll-rtl.css
++++ b/modules/poll/poll-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .poll .bar .foreground {
+   float: right;
+diff --git a/modules/poll/poll-vote.tpl.php b/modules/poll/poll-vote.tpl.php
+index 5b4a736..5ab1cb5 100644
+--- a/modules/poll/poll-vote.tpl.php
++++ b/modules/poll/poll-vote.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file poll-vote.tpl.php
+diff --git a/modules/poll/poll.css b/modules/poll/poll.css
+index 2aaf228..7ee0beb 100644
+--- a/modules/poll/poll.css
++++ b/modules/poll/poll.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .poll .bar {
+   height: 1em;
+diff --git a/modules/poll/poll.info b/modules/poll/poll.info
+index 1622d36..8edb999 100644
+--- a/modules/poll/poll.info
++++ b/modules/poll/poll.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Poll
+ description = Allows your site to capture votes on different topics in the form of multiple choice questions.
+ package = Core - optional
+diff --git a/modules/poll/poll.install b/modules/poll/poll.install
+index 18cff15..5dd977d 100644
+--- a/modules/poll/poll.install
++++ b/modules/poll/poll.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/poll/poll.module b/modules/poll/poll.module
+index d40d66e..a312eca 100644
+--- a/modules/poll/poll.module
++++ b/modules/poll/poll.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/poll/poll.pages.inc b/modules/poll/poll.pages.inc
+index 5970735..e3fb5de 100644
+--- a/modules/poll/poll.pages.inc
++++ b/modules/poll/poll.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/profile/profile-block.tpl.php b/modules/profile/profile-block.tpl.php
+index 31bf5d1..174598c 100644
+--- a/modules/profile/profile-block.tpl.php
++++ b/modules/profile/profile-block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file profile-block.tpl.php
+diff --git a/modules/profile/profile-listing.tpl.php b/modules/profile/profile-listing.tpl.php
+index fb22c06..c0046d8 100644
+--- a/modules/profile/profile-listing.tpl.php
++++ b/modules/profile/profile-listing.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file profile-listing.tpl.php
+diff --git a/modules/profile/profile-wrapper.tpl.php b/modules/profile/profile-wrapper.tpl.php
+index 2030c2a..5b10d47 100644
+--- a/modules/profile/profile-wrapper.tpl.php
++++ b/modules/profile/profile-wrapper.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file profile-wrapper.tpl.php
+diff --git a/modules/profile/profile.admin.inc b/modules/profile/profile.admin.inc
+index d953618..089b5ea 100644
+--- a/modules/profile/profile.admin.inc
++++ b/modules/profile/profile.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/profile/profile.css b/modules/profile/profile.css
+index b64ef9c..c3132f9 100644
+--- a/modules/profile/profile.css
++++ b/modules/profile/profile.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #profile-fields td.category {
+   font-weight: bold;
+diff --git a/modules/profile/profile.info b/modules/profile/profile.info
+index 139670c..a6764f5 100644
+--- a/modules/profile/profile.info
++++ b/modules/profile/profile.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Profile
+ description = Supports configurable user profiles.
+ package = Core - optional
+diff --git a/modules/profile/profile.install b/modules/profile/profile.install
+index e113dc6..e2a7612 100644
+--- a/modules/profile/profile.install
++++ b/modules/profile/profile.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/profile/profile.js b/modules/profile/profile.js
+index 2d84d27..7661d23 100644
+--- a/modules/profile/profile.js
++++ b/modules/profile/profile.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Add functionality to the profile drag and drop table.
+diff --git a/modules/profile/profile.module b/modules/profile/profile.module
+index eba16aa..141c094 100644
+--- a/modules/profile/profile.module
++++ b/modules/profile/profile.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/profile/profile.pages.inc b/modules/profile/profile.pages.inc
+index ef13923..065bdeb 100644
+--- a/modules/profile/profile.pages.inc
++++ b/modules/profile/profile.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/search/search-block-form.tpl.php b/modules/search/search-block-form.tpl.php
+index a464765..2de4bfa 100644
+--- a/modules/search/search-block-form.tpl.php
++++ b/modules/search/search-block-form.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file search-block-form.tpl.php
+diff --git a/modules/search/search-result.tpl.php b/modules/search/search-result.tpl.php
+index 1f9f96e..78c0d34 100644
+--- a/modules/search/search-result.tpl.php
++++ b/modules/search/search-result.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file search-result.tpl.php
+diff --git a/modules/search/search-results.tpl.php b/modules/search/search-results.tpl.php
+index 709245b..f2d95d4 100644
+--- a/modules/search/search-results.tpl.php
++++ b/modules/search/search-results.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file search-results.tpl.php
+diff --git a/modules/search/search-rtl.css b/modules/search/search-rtl.css
+index f6c69ac..fb22300 100644
+--- a/modules/search/search-rtl.css
++++ b/modules/search/search-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .search-advanced .criterion {
+   float: right;
+diff --git a/modules/search/search-theme-form.tpl.php b/modules/search/search-theme-form.tpl.php
+index 541b498..ab1e97e 100644
+--- a/modules/search/search-theme-form.tpl.php
++++ b/modules/search/search-theme-form.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file search-theme-form.tpl.php
+diff --git a/modules/search/search.admin.inc b/modules/search/search.admin.inc
+index 6e57c65..3b374bb 100644
+--- a/modules/search/search.admin.inc
++++ b/modules/search/search.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/search/search.css b/modules/search/search.css
+index cb4a220..a6eccc9 100644
+--- a/modules/search/search.css
++++ b/modules/search/search.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .search-form {
+   margin-bottom: 1em;
+diff --git a/modules/search/search.info b/modules/search/search.info
+index 1ea0f11..5908fc0 100644
+--- a/modules/search/search.info
++++ b/modules/search/search.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Search
+ description = Enables site-wide keyword searching.
+ package = Core - optional
+diff --git a/modules/search/search.install b/modules/search/search.install
+index ebadaf7..0d9d748 100644
+--- a/modules/search/search.install
++++ b/modules/search/search.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/search/search.module b/modules/search/search.module
+index 7841edd..a0860d4 100644
+--- a/modules/search/search.module
++++ b/modules/search/search.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/search/search.pages.inc b/modules/search/search.pages.inc
+index db1773f..9faa1c9 100644
+--- a/modules/search/search.pages.inc
++++ b/modules/search/search.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/statistics/statistics.admin.inc b/modules/statistics/statistics.admin.inc
+index 729d8b8..63845fe 100644
+--- a/modules/statistics/statistics.admin.inc
++++ b/modules/statistics/statistics.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/statistics/statistics.info b/modules/statistics/statistics.info
+index 8934614..b297368 100644
+--- a/modules/statistics/statistics.info
++++ b/modules/statistics/statistics.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Statistics
+ description = Logs access statistics for your site.
+ package = Core - optional
+diff --git a/modules/statistics/statistics.install b/modules/statistics/statistics.install
+index 2a11753..515796a 100644
+--- a/modules/statistics/statistics.install
++++ b/modules/statistics/statistics.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/statistics/statistics.module b/modules/statistics/statistics.module
+index 7ee1e13..ba964ef 100644
+--- a/modules/statistics/statistics.module
++++ b/modules/statistics/statistics.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/statistics/statistics.pages.inc b/modules/statistics/statistics.pages.inc
+index db94129..f10e81c 100644
+--- a/modules/statistics/statistics.pages.inc
++++ b/modules/statistics/statistics.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/syslog/syslog.info b/modules/syslog/syslog.info
+index e08efb5..81cda0a 100644
+--- a/modules/syslog/syslog.info
++++ b/modules/syslog/syslog.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Syslog
+ description = Logs and records system events to syslog.
+ package = Core - optional
+diff --git a/modules/syslog/syslog.install b/modules/syslog/syslog.install
+index feebb63..12ff4fb 100644
+--- a/modules/syslog/syslog.install
++++ b/modules/syslog/syslog.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/syslog/syslog.module b/modules/syslog/syslog.module
+index af4e448..ad2929d 100644
+--- a/modules/syslog/syslog.module
++++ b/modules/syslog/syslog.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/system/admin-rtl.css b/modules/system/admin-rtl.css
+index 08f12ac..4a9ee2c 100644
+--- a/modules/system/admin-rtl.css
++++ b/modules/system/admin-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ div.admin-panel .body {
+   padding: 0 8px 2px 4px;
+diff --git a/modules/system/admin.css b/modules/system/admin.css
+index 00ad19d..3d5c52f 100644
+--- a/modules/system/admin.css
++++ b/modules/system/admin.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** Formatting for administration page
+diff --git a/modules/system/block.tpl.php b/modules/system/block.tpl.php
+index 506f894..0f7f1e1 100644
+--- a/modules/system/block.tpl.php
++++ b/modules/system/block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file block.tpl.php
+diff --git a/modules/system/box.tpl.php b/modules/system/box.tpl.php
+index 796c3dc..ac4df35 100644
+--- a/modules/system/box.tpl.php
++++ b/modules/system/box.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file box.tpl.php
+diff --git a/modules/system/defaults-rtl.css b/modules/system/defaults-rtl.css
+index fc50f7b..924ac5f 100644
+--- a/modules/system/defaults-rtl.css
++++ b/modules/system/defaults-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ th {
+   text-align: right;
+diff --git a/modules/system/defaults.css b/modules/system/defaults.css
+index 7e97e88..eb983b7 100644
+--- a/modules/system/defaults.css
++++ b/modules/system/defaults.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/modules/system/maintenance-page.tpl.php b/modules/system/maintenance-page.tpl.php
+index 4e4e409..750c1e2 100644
+--- a/modules/system/maintenance-page.tpl.php
++++ b/modules/system/maintenance-page.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file maintenance-page.tpl.php
+diff --git a/modules/system/maintenance.css b/modules/system/maintenance.css
+index a18f10c..c234932 100644
+--- a/modules/system/maintenance.css
++++ b/modules/system/maintenance.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /* Update styles */
+ #update-results {
+diff --git a/modules/system/page.tpl.php b/modules/system/page.tpl.php
+index a0c9e7f..c9ff36c 100644
+--- a/modules/system/page.tpl.php
++++ b/modules/system/page.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/system/system-menus-rtl.css b/modules/system/system-menus-rtl.css
+index 4ef54c3..3b92bfb 100644
+--- a/modules/system/system-menus-rtl.css
++++ b/modules/system/system-menus-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ ul.menu {
+   text-align:right;
+diff --git a/modules/system/system-menus.css b/modules/system/system-menus.css
+index 369dcc4..05eb2de 100644
+--- a/modules/system/system-menus.css
++++ b/modules/system/system-menus.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ ul.menu {
+   list-style: none;
+diff --git a/modules/system/system-rtl.css b/modules/system/system-rtl.css
+index d8d2d62..a0fc51e 100644
+--- a/modules/system/system-rtl.css
++++ b/modules/system/system-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ thead th {
+   text-align: right;
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index 109c9ff..f3433c7 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -62,6 +61,7 @@ function system_main_admin_page($arg = NULL) {
+ 
+ /**
+  * Provide a single block from the administration menu as a page.
++ *
+  * This function is often a destination for these blocks.
+  * For example, 'admin/content/types' needs to have a destination to be valid
+  * in the Drupal menu system, but too much information there might be
+diff --git a/modules/system/system.css b/modules/system/system.css
+index 0195c07..9371bb4 100644
+--- a/modules/system/system.css
++++ b/modules/system/system.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/modules/system/system.info b/modules/system/system.info
+index 28c8a68..55986f9 100644
+--- a/modules/system/system.info
++++ b/modules/system/system.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = System
+ description = Handles general site configuration for administrators.
+ package = Core - required
+diff --git a/modules/system/system.install b/modules/system/system.install
+index fe7a945..9263daa 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Test and report Drupal installation requirements.
+diff --git a/modules/system/system.js b/modules/system/system.js
+index 9f875c0..48fd016 100644
+--- a/modules/system/system.js
++++ b/modules/system/system.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Internal function to check using Ajax if clean URLs can be enabled on the
+diff --git a/modules/system/system.module b/modules/system/system.module
+index e55666c..bc540a7 100644
+--- a/modules/system/system.module
++++ b/modules/system/system.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -9,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '6.20');
++define('VERSION', '6.22');
+ 
+ /**
+  * Core API compatibility.
+@@ -920,7 +919,13 @@ function _system_theme_data() {
+     $themes_info = $themes;
+   }
+ 
+-  return $themes_info;
++  // To avoid side effects, we don't return the original objects.
++  $themes_info_cloned = array();
++  foreach ($themes_info as $key => $theme) {
++    $themes_info_cloned[$key] = drupal_clone($theme);
++  }
++
++  return $themes_info_cloned;
+ }
+ 
+ /**
+diff --git a/modules/taxonomy/taxonomy.admin.inc b/modules/taxonomy/taxonomy.admin.inc
+index afc1340..4bd58b5 100644
+--- a/modules/taxonomy/taxonomy.admin.inc
++++ b/modules/taxonomy/taxonomy.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/taxonomy/taxonomy.css b/modules/taxonomy/taxonomy.css
+index 5fdd2b0..36cd641 100644
+--- a/modules/taxonomy/taxonomy.css
++++ b/modules/taxonomy/taxonomy.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ tr.taxonomy-term-preview {
+   background-color: #EEE;
+diff --git a/modules/taxonomy/taxonomy.info b/modules/taxonomy/taxonomy.info
+index b1a2195..35900ec 100644
+--- a/modules/taxonomy/taxonomy.info
++++ b/modules/taxonomy/taxonomy.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Taxonomy
+ description = Enables the categorization of content.
+ package = Core - optional
+diff --git a/modules/taxonomy/taxonomy.install b/modules/taxonomy/taxonomy.install
+index 12e99c6..5ae3650 100644
+--- a/modules/taxonomy/taxonomy.install
++++ b/modules/taxonomy/taxonomy.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_schema().
+diff --git a/modules/taxonomy/taxonomy.js b/modules/taxonomy/taxonomy.js
+index 0631ebd..34ae84a 100644
+--- a/modules/taxonomy/taxonomy.js
++++ b/modules/taxonomy/taxonomy.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Move a block in the blocks table from one region to another via select list.
+diff --git a/modules/taxonomy/taxonomy.module b/modules/taxonomy/taxonomy.module
+index 0141120..eaa6503 100644
+--- a/modules/taxonomy/taxonomy.module
++++ b/modules/taxonomy/taxonomy.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/taxonomy/taxonomy.pages.inc b/modules/taxonomy/taxonomy.pages.inc
+index f272ef9..aa3e68d 100644
+--- a/modules/taxonomy/taxonomy.pages.inc
++++ b/modules/taxonomy/taxonomy.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/throttle/throttle.admin.inc b/modules/throttle/throttle.admin.inc
+index 86fc51f..367009a 100644
+--- a/modules/throttle/throttle.admin.inc
++++ b/modules/throttle/throttle.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/throttle/throttle.info b/modules/throttle/throttle.info
+index 7bdc100..c1ed4e3 100644
+--- a/modules/throttle/throttle.info
++++ b/modules/throttle/throttle.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Throttle
+ description = Handles the auto-throttling mechanism, to control site congestion.
+ package = Core - optional
+diff --git a/modules/throttle/throttle.module b/modules/throttle/throttle.module
+index 43d0903..ecb57aa 100644
+--- a/modules/throttle/throttle.module
++++ b/modules/throttle/throttle.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/tracker/tracker.css b/modules/tracker/tracker.css
+index 3a2d30f..138be88 100644
+--- a/modules/tracker/tracker.css
++++ b/modules/tracker/tracker.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #tracker td.replies {
+   text-align: center;
+diff --git a/modules/tracker/tracker.info b/modules/tracker/tracker.info
+index 0381690..497bc94 100644
+--- a/modules/tracker/tracker.info
++++ b/modules/tracker/tracker.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Tracker
+ description = Enables tracking of recent posts for users.
+ dependencies[] = comment
+diff --git a/modules/tracker/tracker.module b/modules/tracker/tracker.module
+index d1d2555..18726c0 100644
+--- a/modules/tracker/tracker.module
++++ b/modules/tracker/tracker.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/tracker/tracker.pages.inc b/modules/tracker/tracker.pages.inc
+index c82fed6..64c9383 100644
+--- a/modules/tracker/tracker.pages.inc
++++ b/modules/tracker/tracker.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/translation/translation.info b/modules/translation/translation.info
+index f47870d..d67587d 100644
+--- a/modules/translation/translation.info
++++ b/modules/translation/translation.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Content translation
+ description = Allows content to be translated into different languages.
+ dependencies[] = locale
+diff --git a/modules/translation/translation.module b/modules/translation/translation.module
+index 349d009..a701e1a 100644
+--- a/modules/translation/translation.module
++++ b/modules/translation/translation.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/translation/translation.pages.inc b/modules/translation/translation.pages.inc
+index 9818506..ad0fac0 100644
+--- a/modules/translation/translation.pages.inc
++++ b/modules/translation/translation.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/trigger/trigger.admin.inc b/modules/trigger/trigger.admin.inc
+index 61123fa..2201c7e 100644
+--- a/modules/trigger/trigger.admin.inc
++++ b/modules/trigger/trigger.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/trigger/trigger.info b/modules/trigger/trigger.info
+index ca08f85..fb6cebd 100644
+--- a/modules/trigger/trigger.info
++++ b/modules/trigger/trigger.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Trigger
+ description = Enables actions to be fired on certain system events, such as when new content is created.
+ package = Core - optional
+diff --git a/modules/trigger/trigger.install b/modules/trigger/trigger.install
+index 03c8585..5d78dd1 100644
+--- a/modules/trigger/trigger.install
++++ b/modules/trigger/trigger.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/trigger/trigger.module b/modules/trigger/trigger.module
+index 5483b39..7c7ff4b 100644
+--- a/modules/trigger/trigger.module
++++ b/modules/trigger/trigger.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/update/update-rtl.css b/modules/update/update-rtl.css
+index a19c85f..5fc83d1 100644
+--- a/modules/update/update-rtl.css
++++ b/modules/update/update-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .update .project {
+   padding-right: .25em;
+diff --git a/modules/update/update.compare.inc b/modules/update/update.compare.inc
+index b9458ad..1c2e818 100644
+--- a/modules/update/update.compare.inc
++++ b/modules/update/update.compare.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/update/update.css b/modules/update/update.css
+index ce0dcd6..57cef84 100644
+--- a/modules/update/update.css
++++ b/modules/update/update.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ .update .project {
+   font-weight: bold;
+diff --git a/modules/update/update.fetch.inc b/modules/update/update.fetch.inc
+index 470bb41..5cf70f3 100644
+--- a/modules/update/update.fetch.inc
++++ b/modules/update/update.fetch.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/update/update.info b/modules/update/update.info
+index 9c6172a..aba6e82 100644
+--- a/modules/update/update.info
++++ b/modules/update/update.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Update status
+ description = Checks the status of available updates for Drupal and your installed modules and themes.
+ version = VERSION
+diff --git a/modules/update/update.install b/modules/update/update.install
+index ba91b70..8aa86f1 100644
+--- a/modules/update/update.install
++++ b/modules/update/update.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/update/update.module b/modules/update/update.module
+index b6b595a..7c622b3 100644
+--- a/modules/update/update.module
++++ b/modules/update/update.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/update/update.report.inc b/modules/update/update.report.inc
+index 94ba82e..5565563 100644
+--- a/modules/update/update.report.inc
++++ b/modules/update/update.report.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/update/update.settings.inc b/modules/update/update.settings.inc
+index 15a1cd8..117e9f7 100644
+--- a/modules/update/update.settings.inc
++++ b/modules/update/update.settings.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/upload/upload.admin.inc b/modules/upload/upload.admin.inc
+index d937190..fe46db2 100644
+--- a/modules/upload/upload.admin.inc
++++ b/modules/upload/upload.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Form API callback to validate the upload settings form.
+diff --git a/modules/upload/upload.info b/modules/upload/upload.info
+index dfb83d2..32bed34 100644
+--- a/modules/upload/upload.info
++++ b/modules/upload/upload.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Upload
+ description = Allows users to upload and attach files to content.
+ package = Core - optional
+diff --git a/modules/upload/upload.install b/modules/upload/upload.install
+index 22334d7..421883b 100644
+--- a/modules/upload/upload.install
++++ b/modules/upload/upload.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_install().
+diff --git a/modules/upload/upload.module b/modules/upload/upload.module
+index 01b011b..f3e6251 100644
+--- a/modules/upload/upload.module
++++ b/modules/upload/upload.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/user/user-picture.tpl.php b/modules/user/user-picture.tpl.php
+index ae07680..183f151 100644
+--- a/modules/user/user-picture.tpl.php
++++ b/modules/user/user-picture.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file user-picture.tpl.php
+diff --git a/modules/user/user-profile-category.tpl.php b/modules/user/user-profile-category.tpl.php
+index 5594664..bea21f0 100644
+--- a/modules/user/user-profile-category.tpl.php
++++ b/modules/user/user-profile-category.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file user-profile-category.tpl.php
+diff --git a/modules/user/user-profile-item.tpl.php b/modules/user/user-profile-item.tpl.php
+index e51a4b1..70b1de9 100644
+--- a/modules/user/user-profile-item.tpl.php
++++ b/modules/user/user-profile-item.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file user-profile-item.tpl.php
+diff --git a/modules/user/user-profile.tpl.php b/modules/user/user-profile.tpl.php
+index e100d6d..8840749 100644
+--- a/modules/user/user-profile.tpl.php
++++ b/modules/user/user-profile.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file user-profile.tpl.php
+diff --git a/modules/user/user-rtl.css b/modules/user/user-rtl.css
+index ea0278b..2e4c2b4 100644
+--- a/modules/user/user-rtl.css
++++ b/modules/user/user-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #permissions td.permission {
+   padding-left: 0;
+diff --git a/modules/user/user.admin.inc b/modules/user/user.admin.inc
+index 658907a..eac39df 100644
+--- a/modules/user/user.admin.inc
++++ b/modules/user/user.admin.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/user/user.css b/modules/user/user.css
+index 8e08c77..7b2163e 100644
+--- a/modules/user/user.css
++++ b/modules/user/user.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ #permissions td.module {
+   font-weight: bold;
+diff --git a/modules/user/user.info b/modules/user/user.info
+index 6059609..6df834c 100644
+--- a/modules/user/user.info
++++ b/modules/user/user.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = User
+ description = Manages the user registration and login system.
+ package = Core - required
+diff --git a/modules/user/user.install b/modules/user/user.install
+index 44d55f3..b2dd5bb 100644
+--- a/modules/user/user.install
++++ b/modules/user/user.install
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Implementation of hook_schema().
+diff --git a/modules/user/user.js b/modules/user/user.js
+index 371474d..46bfad0 100644
+--- a/modules/user/user.js
++++ b/modules/user/user.js
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ /**
+  * Attach handlers to evaluate the strength of any password fields and to check
+diff --git a/modules/user/user.module b/modules/user/user.module
+index 7d5a137..a4dfe77 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -774,17 +773,7 @@ function user_block($op = 'list', $delta = 0, $edit = array()) {
+           // Perform database queries to gather online user lists.  We use s.timestamp
+           // rather than u.access because it is much faster.
+           $anonymous_count = sess_count($interval);
+-          $authenticated_users = db_query('SELECT DISTINCT u.uid, u.name, s.timestamp FROM {users} u INNER JOIN {sessions} s ON u.uid = s.uid WHERE s.timestamp >= %d AND s.uid > 0 ORDER BY s.timestamp DESC', $interval);
+-          $authenticated_count = 0;
+-          $max_users = variable_get('user_block_max_list_count', 10);
+-          $items = array();
+-          while ($account = db_fetch_object($authenticated_users)) {
+-            if ($max_users > 0) {
+-              $items[] = $account;
+-              $max_users--;
+-            }
+-            $authenticated_count++;
+-          }
++          $authenticated_count = db_result(db_query('SELECT COUNT(DISTINCT s.uid) FROM {sessions} s WHERE s.timestamp >= %d AND s.uid > 0', $interval));
+ 
+           // Format the output with proper grammar.
+           if ($anonymous_count == 1 && $authenticated_count == 1) {
+@@ -797,6 +786,10 @@ function user_block($op = 'list', $delta = 0, $edit = array()) {
+           // Display a list of currently online users.
+           $max_users = variable_get('user_block_max_list_count', 10);
+           if ($authenticated_count && $max_users) {
++            $authenticated_users = db_query_range('SELECT u.uid, u.name, MAX(s.timestamp) AS timestamp FROM {users} u INNER JOIN {sessions} s ON u.uid = s.uid WHERE s.timestamp >= %d AND s.uid > 0 GROUP BY u.uid, u.name ORDER BY s.timestamp DESC', $interval, 0, $max_users);
++            while ($account = db_fetch_object($authenticated_users)) {
++              $items[] = $account;
++            }
+             $output .= theme('user_list', $items, t('Online users'));
+           }
+ 
+diff --git a/modules/user/user.pages.inc b/modules/user/user.pages.inc
+index e541256..3a52a01 100644
+--- a/modules/user/user.pages.inc
++++ b/modules/user/user.pages.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/profiles/default/default.profile b/profiles/default/default.profile
+index 15bda76..1d28ebc 100644
+--- a/profiles/default/default.profile
++++ b/profiles/default/default.profile
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Return an array of the modules to be enabled when this profile is installed.
+diff --git a/robots.txt b/robots.txt
+index ce23e33..804a074 100644
+--- a/robots.txt
++++ b/robots.txt
+@@ -1,4 +1,3 @@
+-# $Id$
+ #
+ # robots.txt
+ #
+@@ -41,7 +40,6 @@ Disallow: /xmlrpc.php
+ # Paths (clean URLs)
+ Disallow: /admin/
+ Disallow: /comment/reply/
+-Disallow: /contact/
+ Disallow: /logout/
+ Disallow: /node/add/
+ Disallow: /search/
+@@ -51,7 +49,6 @@ Disallow: /user/login/
+ # Paths (no clean URLs)
+ Disallow: /?q=admin/
+ Disallow: /?q=comment/reply/
+-Disallow: /?q=contact/
+ Disallow: /?q=logout/
+ Disallow: /?q=node/add/
+ Disallow: /?q=search/
+diff --git a/scripts/code-clean.sh b/scripts/code-clean.sh
+index 19a15ad..3338b6a 100644
+--- a/scripts/code-clean.sh
++++ b/scripts/code-clean.sh
+@@ -1,5 +1,4 @@
+ #!/bin/sh
+-# $Id$
+ 
+ find . -name "*~" -type f | xargs rm -f
+ find . -name ".#*" -type f | xargs rm -f
+diff --git a/scripts/code-style.pl b/scripts/code-style.pl
+index 5970fc1..f71bef9 100644
+--- a/scripts/code-style.pl
++++ b/scripts/code-style.pl
+@@ -1,5 +1,4 @@
+ #!/usr/bin/perl -w
+-# $Id$
+ 
+ use Pod::Usage;
+ use Getopt::Long qw(GetOptions);
+diff --git a/scripts/cron-curl.sh b/scripts/cron-curl.sh
+index 633b3d8..9b168ab 100644
+--- a/scripts/cron-curl.sh
++++ b/scripts/cron-curl.sh
+@@ -1,4 +1,3 @@
+ #!/bin/sh
+-# $Id$
+ 
+ curl --silent --compressed http://example.com/cron.php
+diff --git a/scripts/cron-lynx.sh b/scripts/cron-lynx.sh
+index 04317be..904667a 100644
+--- a/scripts/cron-lynx.sh
++++ b/scripts/cron-lynx.sh
+@@ -1,4 +1,3 @@
+ #!/bin/sh
+-# $Id$
+ 
+ /usr/bin/lynx -source http://example.com/cron.php > /dev/null 2>&1
+diff --git a/scripts/drupal.sh b/scripts/drupal.sh
+index c6ee726..2bf035a 100755
+--- a/scripts/drupal.sh
++++ b/scripts/drupal.sh
+@@ -1,6 +1,5 @@
+ #!/usr/bin/php
+ <?php
+-// $Id$
+ 
+ /**
+  * Drupal shell execution script
+diff --git a/sites/all/README.txt b/sites/all/README.txt
+index 4f044e3..7166d37 100644
+--- a/sites/all/README.txt
++++ b/sites/all/README.txt
+@@ -1,4 +1,3 @@
+-// $Id$
+ 
+ This directory should be used to place downloaded and custom modules
+ and themes which are common to all sites. This will allow you to
+diff --git a/sites/default/default.settings.php b/sites/default/default.settings.php
+index 49d5964..70c6480 100644
+--- a/sites/default/default.settings.php
++++ b/sites/default/default.settings.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/themes/bluemarine/block.tpl.php b/themes/bluemarine/block.tpl.php
+index 02ec48c..a2a9d3b 100644
+--- a/themes/bluemarine/block.tpl.php
++++ b/themes/bluemarine/block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+   <div class="block block-<?php print $block->module; ?>" id="block-<?php print $block->module; ?>-<?php print $block->delta; ?>">
+     <h2 class="title"><?php print $block->subject; ?></h2>
+diff --git a/themes/bluemarine/bluemarine.info b/themes/bluemarine/bluemarine.info
+index 38c3385..4182d98 100644
+--- a/themes/bluemarine/bluemarine.info
++++ b/themes/bluemarine/bluemarine.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Bluemarine
+ description = Table-based multi-column theme with a marine and ash color scheme.
+ version = VERSION
+diff --git a/themes/bluemarine/box.tpl.php b/themes/bluemarine/box.tpl.php
+index c1ca328..09b07da 100644
+--- a/themes/bluemarine/box.tpl.php
++++ b/themes/bluemarine/box.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+   <div class="box">
+     <?php if ($title) { ?><h2 class="title"><?php print $title; ?></h2><?php } ?>
+diff --git a/themes/bluemarine/comment.tpl.php b/themes/bluemarine/comment.tpl.php
+index bd12491..736faa1 100644
+--- a/themes/bluemarine/comment.tpl.php
++++ b/themes/bluemarine/comment.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+   <div class="comment<?php print ' '. $status; ?>">
+     <?php if ($picture) {
+diff --git a/themes/bluemarine/node.tpl.php b/themes/bluemarine/node.tpl.php
+index 4a6e1fa..657cc1a 100644
+--- a/themes/bluemarine/node.tpl.php
++++ b/themes/bluemarine/node.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+   <div class="node<?php if ($sticky) { print " sticky"; } ?><?php if (!$status) { print " node-unpublished"; } ?>">
+     <?php if ($picture) {
+diff --git a/themes/bluemarine/page.tpl.php b/themes/bluemarine/page.tpl.php
+index cd324f9..74e4962 100644
+--- a/themes/bluemarine/page.tpl.php
++++ b/themes/bluemarine/page.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+ <html xmlns="http://www.w3.org/1999/xhtml" lang="<?php print $language->language ?>" xml:lang="<?php print $language->language ?>" dir="<?php print $language->dir ?>">
+ 
+diff --git a/themes/bluemarine/style-rtl.css b/themes/bluemarine/style-rtl.css
+index ef3c469..63c2352 100644
+--- a/themes/bluemarine/style-rtl.css
++++ b/themes/bluemarine/style-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ body {
+   direction: rtl;
+ }
+diff --git a/themes/bluemarine/style.css b/themes/bluemarine/style.css
+index c88def1..961e938 100644
+--- a/themes/bluemarine/style.css
++++ b/themes/bluemarine/style.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/themes/chameleon/chameleon.info b/themes/chameleon/chameleon.info
+index 4a6850e..5f9854b 100644
+--- a/themes/chameleon/chameleon.info
++++ b/themes/chameleon/chameleon.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Chameleon
+ description = Minimalist tabled theme with light colors.
+ regions[left] = Left sidebar
+diff --git a/themes/chameleon/chameleon.theme b/themes/chameleon/chameleon.theme
+index d10b127..b7c0559 100644
+--- a/themes/chameleon/chameleon.theme
++++ b/themes/chameleon/chameleon.theme
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+diff --git a/themes/chameleon/common-rtl.css b/themes/chameleon/common-rtl.css
+index 8ce725d..9fbcd87 100644
+--- a/themes/chameleon/common-rtl.css
++++ b/themes/chameleon/common-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   direction: rtl;
+diff --git a/themes/chameleon/common.css b/themes/chameleon/common.css
+index 642dc48..4d3523d 100644
+--- a/themes/chameleon/common.css
++++ b/themes/chameleon/common.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/themes/chameleon/marvin/marvin.info b/themes/chameleon/marvin/marvin.info
+index ac46c4e..6685030 100644
+--- a/themes/chameleon/marvin/marvin.info
++++ b/themes/chameleon/marvin/marvin.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Marvin
+ description = Boxy tabled theme in all grays.
+ regions[left] = Left sidebar
+diff --git a/themes/chameleon/marvin/style-rtl.css b/themes/chameleon/marvin/style-rtl.css
+index 6da7ca6..2e540d4 100644
+--- a/themes/chameleon/marvin/style-rtl.css
++++ b/themes/chameleon/marvin/style-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   background-image: url(druplicon-watermark-rtl.png);
+diff --git a/themes/chameleon/marvin/style.css b/themes/chameleon/marvin/style.css
+index bcd3bce..456bbc2 100644
+--- a/themes/chameleon/marvin/style.css
++++ b/themes/chameleon/marvin/style.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/themes/chameleon/style-rtl.css b/themes/chameleon/style-rtl.css
+index c9c43a4..0bf1f34 100644
+--- a/themes/chameleon/style-rtl.css
++++ b/themes/chameleon/style-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   padding: 5em 3em 0 0;
+diff --git a/themes/chameleon/style.css b/themes/chameleon/style.css
+index 0769c0c..c4c5787 100644
+--- a/themes/chameleon/style.css
++++ b/themes/chameleon/style.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/themes/garland/block.tpl.php b/themes/garland/block.tpl.php
+index 1b7ae30..e1167ad 100644
+--- a/themes/garland/block.tpl.php
++++ b/themes/garland/block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div id="block-<?php print $block->module .'-'. $block->delta; ?>" class="clear-block block block-<?php print $block->module ?>">
+ 
+diff --git a/themes/garland/color/color.inc b/themes/garland/color/color.inc
+index 10d76de..02db92a 100644
+--- a/themes/garland/color/color.inc
++++ b/themes/garland/color/color.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ $info = array(
+ 
+diff --git a/themes/garland/color/preview.css b/themes/garland/color/preview.css
+index 8ba5876..771be83 100644
+--- a/themes/garland/color/preview.css
++++ b/themes/garland/color/preview.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /* Positioning */
+ #preview {
+diff --git a/themes/garland/comment.tpl.php b/themes/garland/comment.tpl.php
+index ea83a24..739057c 100644
+--- a/themes/garland/comment.tpl.php
++++ b/themes/garland/comment.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div class="comment<?php print ($comment->new) ? ' comment-new' : ''; print ' '. $status; print ' '. $zebra; ?>">
+ 
+diff --git a/themes/garland/fix-ie-rtl.css b/themes/garland/fix-ie-rtl.css
+index 370d7a8..fe160a1 100644
+--- a/themes/garland/fix-ie-rtl.css
++++ b/themes/garland/fix-ie-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   /* Center layout */
+diff --git a/themes/garland/fix-ie.css b/themes/garland/fix-ie.css
+index cb7e93b..325aaef 100644
+--- a/themes/garland/fix-ie.css
++++ b/themes/garland/fix-ie.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /**
+  * Garland, for Drupal 6.x
+diff --git a/themes/garland/garland.info b/themes/garland/garland.info
+index 3a5d3bb..b435812 100644
+--- a/themes/garland/garland.info
++++ b/themes/garland/garland.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Garland
+ description = Tableless, recolorable, multi-column, fluid width theme (default).
+ version = VERSION
+diff --git a/themes/garland/maintenance-page.tpl.php b/themes/garland/maintenance-page.tpl.php
+index 1a422cd..91987d7 100644
+--- a/themes/garland/maintenance-page.tpl.php
++++ b/themes/garland/maintenance-page.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file maintenance-page.tpl.php
+diff --git a/themes/garland/minnelli/color/color.inc b/themes/garland/minnelli/color/color.inc
+index eab1235..a05fe66 100644
+--- a/themes/garland/minnelli/color/color.inc
++++ b/themes/garland/minnelli/color/color.inc
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ $info = array(
+ 
+diff --git a/themes/garland/minnelli/minnelli.css b/themes/garland/minnelli/minnelli.css
+index 6c6a256..cec148c 100644
+--- a/themes/garland/minnelli/minnelli.css
++++ b/themes/garland/minnelli/minnelli.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /**
+  * Minnelli, for Drupal 6.x
+diff --git a/themes/garland/minnelli/minnelli.info b/themes/garland/minnelli/minnelli.info
+index 3fdb8fc..21a4c38 100644
+--- a/themes/garland/minnelli/minnelli.info
++++ b/themes/garland/minnelli/minnelli.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Minnelli
+ description = Tableless, recolorable, multi-column, fixed width theme.
+ version = VERSION
+diff --git a/themes/garland/node.tpl.php b/themes/garland/node.tpl.php
+index b227d86..184e11c 100644
+--- a/themes/garland/node.tpl.php
++++ b/themes/garland/node.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div id="node-<?php print $node->nid; ?>" class="node<?php if ($sticky) { print ' sticky'; } ?><?php if (!$status) { print ' node-unpublished'; } ?>">
+ 
+diff --git a/themes/garland/page.tpl.php b/themes/garland/page.tpl.php
+index 773869c..8c7ff9a 100644
+--- a/themes/garland/page.tpl.php
++++ b/themes/garland/page.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+   "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+ <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="<?php print $language->language ?>" lang="<?php print $language->language ?>" dir="<?php print $language->dir ?>">
+diff --git a/themes/garland/print.css b/themes/garland/print.css
+index 8716522..1b82c36 100644
+--- a/themes/garland/print.css
++++ b/themes/garland/print.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /**
+  * Garland, for Drupal 5.0
+diff --git a/themes/garland/style-rtl.css b/themes/garland/style-rtl.css
+index 791abf2..c9e783c 100644
+--- a/themes/garland/style-rtl.css
++++ b/themes/garland/style-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ html {
+   direction: rtl;
+diff --git a/themes/garland/style.css b/themes/garland/style.css
+index cef969c..46b9b57 100644
+--- a/themes/garland/style.css
++++ b/themes/garland/style.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /**
+  * Garland, for Drupal 6.x
+diff --git a/themes/garland/template.php b/themes/garland/template.php
+index ce85ea5..5426620 100644
+--- a/themes/garland/template.php
++++ b/themes/garland/template.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * Sets the body-tag class attribute.
+diff --git a/themes/pushbutton/block.tpl.php b/themes/pushbutton/block.tpl.php
+index 0e2978e..c787f7f 100644
+--- a/themes/pushbutton/block.tpl.php
++++ b/themes/pushbutton/block.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div class="<?php print "block block-$block->module" ?>" id="<?php print "block-$block->module-$block->delta"; ?>">
+   <div class="title"><h3><?php print $block->subject ?></h3></div>
+diff --git a/themes/pushbutton/box.tpl.php b/themes/pushbutton/box.tpl.php
+index 0374ba6..d89d67b 100644
+--- a/themes/pushbutton/box.tpl.php
++++ b/themes/pushbutton/box.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div class="box">
+   <?php if ($title): ?>
+diff --git a/themes/pushbutton/comment.tpl.php b/themes/pushbutton/comment.tpl.php
+index 264561b..9a4151b 100644
+--- a/themes/pushbutton/comment.tpl.php
++++ b/themes/pushbutton/comment.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div class="comment<?php print ' '. $status; ?>">
+   <?php if ($picture) : ?>
+diff --git a/themes/pushbutton/node.tpl.php b/themes/pushbutton/node.tpl.php
+index c464011..68853f7 100644
+--- a/themes/pushbutton/node.tpl.php
++++ b/themes/pushbutton/node.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?>
+ <div class="node<?php if ($sticky) { print " sticky"; } ?><?php if (!$status) { print " node-unpublished"; } ?>">
+   <?php print $picture ?>
+diff --git a/themes/pushbutton/page.tpl.php b/themes/pushbutton/page.tpl.php
+index d3dce0d..7443df1 100644
+--- a/themes/pushbutton/page.tpl.php
++++ b/themes/pushbutton/page.tpl.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ ?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+ <html xmlns="http://www.w3.org/1999/xhtml" lang="<?php print $language->language ?>" xml:lang="<?php print $language->language ?>" dir="<?php print $language->dir ?>">
+ <head>
+diff --git a/themes/pushbutton/pushbutton.info b/themes/pushbutton/pushbutton.info
+index 2f78fa4..5bd8f57 100644
+--- a/themes/pushbutton/pushbutton.info
++++ b/themes/pushbutton/pushbutton.info
+@@ -1,4 +1,3 @@
+-; $Id$
+ name = Pushbutton
+ description = Tabled, multi-column theme in blue and orange tones.
+ version = VERSION
+diff --git a/themes/pushbutton/style-rtl.css b/themes/pushbutton/style-rtl.css
+index 9a7bfb5..1448829 100644
+--- a/themes/pushbutton/style-rtl.css
++++ b/themes/pushbutton/style-rtl.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ body {
+   direction: rtl;
+diff --git a/themes/pushbutton/style.css b/themes/pushbutton/style.css
+index 47e0d5b..365f738 100644
+--- a/themes/pushbutton/style.css
++++ b/themes/pushbutton/style.css
+@@ -1,4 +1,3 @@
+-/* $Id$ */
+ 
+ /*
+ ** HTML elements
+diff --git a/update.php b/update.php
+index 13e74dc..38fa9b7 100644
+--- a/update.php
++++ b/update.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
+@@ -346,8 +345,8 @@ function update_results_page() {
+           if (!count($queries)) {
+             $output .= '<li class="none">No queries</li>';
+           }
++          $output .= '</ul>';
+         }
+-        $output .= '</ul>';
+       }
+     }
+     $output .= '</div>';
+diff --git a/xmlrpc.php b/xmlrpc.php
+index feab8f0..0f0300b 100644
+--- a/xmlrpc.php
++++ b/xmlrpc.php
+@@ -1,5 +1,4 @@
+ <?php
+-// $Id$
+ 
+ /**
+  * @file
