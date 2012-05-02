@@ -1,0 +1,322 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index b68b7fa..c7781c1 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,6 +1,7 @@
+ 
+-Drupal 7.13 xxxx-xx-xx (development version)
++Drupal 7.13 2012-05-02
+ ----------------------
++- Fixed security issues (Multiple vulnerabilities), see SA-CORE-2012-002.
+ 
+ Drupal 7.12, 2012-02-01
+ ----------------------
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index c32c05d..763aad6 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -8,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '7.12');
++define('VERSION', '7.13');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/includes/file.inc b/includes/file.inc
+index 7fd6c71..676b32f 100644
+--- a/includes/file.inc
++++ b/includes/file.inc
+@@ -1971,7 +1971,9 @@ function file_download() {
+       $function = $module . '_file_download';
+       $result = $function($uri);
+       if ($result == -1) {
+-        return drupal_access_denied();
++        // Throw away the headers received so far.
++        $headers = array();
++        break;
+       }
+       if (isset($result) && is_array($result)) {
+         $headers = array_merge($headers, $result);
+@@ -1980,9 +1982,12 @@ function file_download() {
+     if (count($headers)) {
+       file_transfer($uri, $headers);
+     }
+-    return drupal_access_denied();
++    drupal_access_denied();
+   }
+-  return drupal_not_found();
++  else {
++    drupal_not_found();
++  }
++  drupal_exit();
+ }
+ 
+ 
+diff --git a/modules/filter/filter.module b/modules/filter/filter.module
+index 71dc21a..7aa145b 100644
+--- a/modules/filter/filter.module
++++ b/modules/filter/filter.module
+@@ -1409,7 +1409,7 @@ function _filter_url($text, $filter) {
+   $tasks['_filter_url_parse_full_links'] = $pattern;
+ 
+   // Match e-mail addresses.
+-  $url_pattern = "[A-Za-z0-9._-]+@(?:$domain)";
++  $url_pattern = "[A-Za-z0-9._-]{1,254}@(?:$domain)";
+   $pattern = "`($url_pattern)`";
+   $tasks['_filter_url_parse_email_links'] = $pattern;
+ 
+diff --git a/modules/forum/forum.install b/modules/forum/forum.install
+index 589e3a1..32a9bb9 100644
+--- a/modules/forum/forum.install
++++ b/modules/forum/forum.install
+@@ -442,3 +442,16 @@ function forum_update_7003() {
+ /**
+  * @} End of "addtogroup updates-7.x-extra"
+  */
++
++/**
++ * Update {form_index} so that only published nodes are indexed.
++ */
++function forum_update_7011() {
++  $select = db_select('node', 'n')
++    ->fields('n', array('nid'))
++    ->condition('status', 0 );
++
++  db_delete('forum_index')
++    ->condition('nid', $select, 'IN')
++    ->execute();
++}
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index f538216..1947e4d 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -545,32 +545,43 @@ function forum_field_storage_pre_insert($entity_type, $entity, &$skip_fields) {
+ function forum_field_storage_pre_update($entity_type, $entity, &$skip_fields) {
+   $first_call = &drupal_static(__FUNCTION__, array());
+ 
+-  if ($entity_type == 'node' && $entity->status && _forum_node_check_node_type($entity)) {
+-    // We don't maintain data for old revisions, so clear all previous values
+-    // from the table. Since this hook runs once per field, per object, make
+-    // sure we only wipe values once.
+-    if (!isset($first_call[$entity->nid])) {
+-      $first_call[$entity->nid] = FALSE;
+-      db_delete('forum_index')->condition('nid', $entity->nid)->execute();
+-    }
+-    $query = db_insert('forum_index')->fields(array('nid', 'title', 'tid', 'sticky', 'created', 'comment_count', 'last_comment_timestamp'));
+-    foreach ($entity->taxonomy_forums as $language) {
+-      foreach ($language as $item) {
+-        $query->values(array(
+-          'nid' => $entity->nid,
+-          'title' => $entity->title,
+-          'tid' => $item['tid'],
+-          'sticky' => $entity->sticky,
+-          'created' => $entity->created,
+-          'comment_count' => 0,
+-          'last_comment_timestamp' => $entity->created,
+-        ));
++  if ($entity_type == 'node' && _forum_node_check_node_type($entity)) {
++
++    // If the node is published, update the forum index.
++    if ($entity->status) {
++
++      // We don't maintain data for old revisions, so clear all previous values
++      // from the table. Since this hook runs once per field, per object, make
++      // sure we only wipe values once.
++      if (!isset($first_call[$entity->nid])) {
++        $first_call[$entity->nid] = FALSE;
++        db_delete('forum_index')->condition('nid', $entity->nid)->execute();
++      }
++      $query = db_insert('forum_index')->fields(array('nid', 'title', 'tid', 'sticky', 'created', 'comment_count', 'last_comment_timestamp'));
++      foreach ($entity->taxonomy_forums as $language) {
++        foreach ($language as $item) {
++          $query->values(array(
++            'nid' => $entity->nid,
++            'title' => $entity->title,
++            'tid' => $item['tid'],
++            'sticky' => $entity->sticky,
++            'created' => $entity->created,
++            'comment_count' => 0,
++            'last_comment_timestamp' => $entity->created,
++          ));
++        }
+       }
++      $query->execute();
++      // The logic for determining last_comment_count is fairly complex, so
++      // call _forum_update_forum_index() too.
++      _forum_update_forum_index($entity->nid);
+     }
+-    $query->execute();
+-    // The logic for determining last_comment_count is fairly complex, so
+-    // call _forum_update_forum_index() too.
+-    _forum_update_forum_index($entity->nid);
++
++    // When a forum node is unpublished, remove it from the forum_index table.
++    else {
++      db_delete('forum_index')->condition('nid', $entity->nid)->execute();
++    }
++
+   }
+ }
+ 
+diff --git a/modules/forum/forum.test b/modules/forum/forum.test
+index c7c3d9c..cb9beff 100644
+--- a/modules/forum/forum.test
++++ b/modules/forum/forum.test
+@@ -548,3 +548,65 @@ class ForumTestCase extends DrupalWebTestCase {
+     }
+   }
+ }
++
++/**
++ * Tests the forum index listing.
++ */
++class ForumIndexTestCase extends DrupalWebTestCase {
++
++  public static function getInfo() {
++    return array(
++      'name' => 'Forum index',
++      'description' => 'Tests the forum index listing.',
++      'group' => 'Forum',
++    );
++  }
++
++  function setUp() {
++    parent::setUp('taxonomy', 'comment', 'forum');
++
++    // Create a test user.
++    $web_user = $this->drupalCreateUser(array('create forum content', 'edit own forum content', 'edit any forum content', 'administer nodes'));
++    $this->drupalLogin($web_user);
++  }
++
++  /**
++   * Tests the forum index for published and unpublished nodes.
++   */
++  function testForumIndexStatus() {
++
++    $langcode = LANGUAGE_NONE;
++
++    // The forum ID to use.
++    $tid = 1;
++
++    // Create a test node.
++    $title = $this->randomName(20);
++    $edit = array(
++      "title" => $title,
++      "body[$langcode][0][value]" => $this->randomName(200),
++    );
++
++    // Create the forum topic, preselecting the forum ID via a URL parameter.
++    $this->drupalPost('node/add/forum/' . $tid, $edit, t('Save'));
++
++    // Check that the node exists in the database.
++    $node = $this->drupalGetNodeByTitle($title);
++    $this->assertTrue(!empty($node), 'New forum node found in database.');
++
++    // Verify that the node appears on the index.
++    $this->drupalGet('forum/' . $tid);
++    $this->assertText($title, 'Published forum topic appears on index.');
++
++    // Unpublish the node.
++    $edit = array(
++      'status' => FALSE,
++    );
++    $this->drupalPost("node/{$node->nid}/edit", $edit, t('Save'));
++    $this->assertText(t('Access denied'), 'Unpublished node is no longer accessible.');
++
++    // Verify that the node no longer appears on the index.
++    $this->drupalGet('forum/' . $tid);
++    $this->assertNoText($title, 'Unpublished forum topic no longer appears on index.');
++  }
++}
+diff --git a/modules/image/image.module b/modules/image/image.module
+index 066bd34..bca520e 100644
+--- a/modules/image/image.module
++++ b/modules/image/image.module
+@@ -297,12 +297,9 @@ function image_file_download($uri) {
+           // Send headers describing the image's size, and MIME-type...
+           'Content-Type' => $info['mime_type'],
+           'Content-Length' => $info['file_size'],
+-          // ...and allow the file to be cached for two weeks (matching the
+-          // value we/ use for the mod_expires settings in .htaccess) and
+-          // ensure that caching proxies do not share the image with other
+-          // users.
+-          'Expires' => gmdate(DATE_RFC1123, REQUEST_TIME + 1209600),
+-          'Cache-Control' => 'max-age=1209600, private, must-revalidate',
++          // By not explicitly setting them here, this uses normal Drupal
++          // Expires, Cache-Control and ETag headers to prevent proxy or
++          // browser caching of private images.
+         );
+       }
+     }
+diff --git a/modules/image/image.test b/modules/image/image.test
+index 3b7f3e7..ff5083a 100644
+--- a/modules/image/image.test
++++ b/modules/image/image.test
+@@ -209,7 +209,22 @@ class ImageStylesPathAndUrlUnitTest extends DrupalWebTestCase {
+     $this->assertEqual($this->drupalGetHeader('Content-Type'), $generated_image_info['mime_type'], t('Expected Content-Type was reported.'));
+     $this->assertEqual($this->drupalGetHeader('Content-Length'), $generated_image_info['file_size'], t('Expected Content-Length was reported.'));
+     if ($scheme == 'private') {
++      $this->assertEqual($this->drupalGetHeader('Expires'), 'Sun, 19 Nov 1978 05:00:00 GMT', t('Expires header was sent.'));
++      $this->assertEqual($this->drupalGetHeader('Cache-Control'), 'no-cache, must-revalidate, post-check=0, pre-check=0', t('Cache-Control header was set to prevent caching.'));
+       $this->assertEqual($this->drupalGetHeader('X-Image-Owned-By'), 'image_module_test', t('Expected custom header has been added.'));
++      // Verify access is denied to private image styles.
++      $this->drupalLogout();
++      $this->drupalGet($generate_url);
++      $this->assertResponse(403, t('Confirmed that access is denied for the private image style.') );
++      // Verify that images are not appended to the response. Currently this test only uses PNG images.
++      if (strpos($generate_url, '.png') === FALSE ) {
++        $this->fail( t('Confirming that private image styles are not appended require PNG file.') );
++      }
++      else {
++        // Check for PNG-Signature (cf. http://www.libpng.org/pub/png/book/chapter08.html#png.ch08.div.2) in the
++        // response body.
++        $this->assertNoRaw( chr(137) . chr(80) . chr(78) . chr(71) . chr(13) . chr(10) . chr(26) . chr(10), t('No PNG signature found in the response body.') );
++      }
+     }
+   }
+ }
+diff --git a/modules/node/node.admin.inc b/modules/node/node.admin.inc
+index 9eeee0d..a1967c4 100644
+--- a/modules/node/node.admin.inc
++++ b/modules/node/node.admin.inc
+@@ -422,6 +422,7 @@ function node_admin_nodes() {
+     ->fields('n',array('nid'))
+     ->limit(50)
+     ->orderByHeader($header)
++    ->addTag('node_access')
+     ->execute()
+     ->fetchCol();
+   $nodes = node_load_multiple($nids);
+diff --git a/modules/user/user.module b/modules/user/user.module
+index da61f44..87f7b5e 100644
+--- a/modules/user/user.module
++++ b/modules/user/user.module
+@@ -1282,7 +1282,7 @@ function user_user_categories() {
+ }
+ 
+ function user_login_block($form) {
+-  $form['#action'] = url($_GET['q'], array('query' => drupal_get_destination()));
++  $form['#action'] = url(current_path(), array('query' => drupal_get_destination(), 'external' => FALSE));
+   $form['#id'] = 'user-login-form';
+   $form['#validate'] = user_login_default_validators();
+   $form['#submit'][] = 'user_login_submit';
+diff --git a/modules/user/user.test b/modules/user/user.test
+index 6ecbfac..40e6ec3 100644
+--- a/modules/user/user.test
++++ b/modules/user/user.test
+@@ -1455,6 +1455,13 @@ class UserBlocksUnitTests extends DrupalWebTestCase {
+     $this->drupalPost('filter/tips', $edit, t('Log in'));
+     $this->assertNoText(t('User login'), t('Logged in.'));
+     $this->assertPattern('!<title.*?' . t('Compose tips') . '.*?</title>!', t('Still on the same page after login for allowed page'));
++
++    // Check that the user login block is not vulnerable to information
++    // disclosure to third party sites.
++    $this->drupalLogout();
++    $this->drupalPost('http://example.com/', $edit, t('Log in'), array('external' => FALSE));
++    // Check that we remain on the site after login.
++    $this->assertEqual(url('user/' . $user->uid, array('absolute' => TRUE)), $this->getUrl(), t('Redirected to user profile page after login from the frontpage'));
+   }
+ 
+   /**
