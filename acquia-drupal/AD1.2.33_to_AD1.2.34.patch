@@ -1,0 +1,136 @@
+diff --git a/README.txt b/README.txt
+deleted file mode 100644
+index 3f9ede5..0000000
+--- a/README.txt
++++ /dev/null
+@@ -1 +0,0 @@
+-AD git repo, to pull patch files.
+\ No newline at end of file
+diff --git a/modules/acquia/acquia_connector/acquia_agent/acquia_agent_drupal_version.inc b/modules/acquia/acquia_connector/acquia_agent/acquia_agent_drupal_version.inc
+index 4a988b2..19dbad2 100644
+--- a/modules/acquia/acquia_connector/acquia_agent/acquia_agent_drupal_version.inc
++++ b/modules/acquia/acquia_connector/acquia_agent/acquia_agent_drupal_version.inc
+@@ -18,7 +18,7 @@ define('IS_ACQUIA_DRUPAL', TRUE);
+ /**
+  * Acquia Drupal version information (only used if IS_ACQUIA_DRUPAL).
+  */
+-define('ACQUIA_DRUPAL_VERSION' , '1.2.33 (Drupal 6.20 core)');
++define('ACQUIA_DRUPAL_VERSION' , '1.2.34 (Drupal 6.20 core)');
+ define('ACQUIA_DRUPAL_SERIES'  , '1.0');
+ define('ACQUIA_DRUPAL_BRANCH'  , '1.x-6.x');
+-define('ACQUIA_DRUPAL_REVISION', '5349');
++define('ACQUIA_DRUPAL_REVISION', '5460');
+diff --git a/modules/acquia/tagadelic/tagadelic.css b/modules/acquia/tagadelic/tagadelic.css
+index 821c5f8..0a557fd 100644
+--- a/modules/acquia/tagadelic/tagadelic.css
++++ b/modules/acquia/tagadelic/tagadelic.css
+@@ -1,4 +1,4 @@
+-/*$Id: tagadelic.css,v 1.2 2006/11/16 16:57:56 ber Exp $*/
++/*$Id$*/
+ /* Tagadelic default example stylesheet **/
+ 
+ .wrapper.tagadelic {
+diff --git a/modules/acquia/tagadelic/tagadelic.info b/modules/acquia/tagadelic/tagadelic.info
+index 56f40e6..e19d3c7 100644
+--- a/modules/acquia/tagadelic/tagadelic.info
++++ b/modules/acquia/tagadelic/tagadelic.info
+@@ -1,12 +1,19 @@
+-; $Id: tagadelic.info,v 1.2 2008/02/27 15:32:05 robloach Exp $
++; $Id$
+ name = Tagadelic
+ description = Tagadelic makes weighted tag clouds from your taxonomy terms.
+ core = 6.x
+ dependencies[] = taxonomy
+ package = "Taxonomy"
+ 
++; Information added by drupal.org packaging script on 2011-03-16
++version = "6.x-1.3"
++core = "6.x"
++project = "tagadelic"
++datestamp = "1300300868"
++
++
+ ; Information added by Acquia.com packaging script
+-version = "6.x-1.2"
++version = "6.x-1.3"
+ core = "6.x"
+ project = "tagadelic"
+ acquia = "1"
+diff --git a/modules/acquia/tagadelic/tagadelic.install b/modules/acquia/tagadelic/tagadelic.install
+index fa865a8..ed82766 100644
+--- a/modules/acquia/tagadelic/tagadelic.install
++++ b/modules/acquia/tagadelic/tagadelic.install
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: tagadelic.install,v 1.1.2.2 2008/12/31 11:43:29 ber Exp $
++// $Id$
+ 
+ /**
+  * @file
+diff --git a/modules/acquia/tagadelic/tagadelic.module b/modules/acquia/tagadelic/tagadelic.module
+index 9aee951..5b61758 100644
+--- a/modules/acquia/tagadelic/tagadelic.module
++++ b/modules/acquia/tagadelic/tagadelic.module
+@@ -1,5 +1,5 @@
+ <?php
+-// $Id: tagadelic.module,v 1.40.2.4 2008/12/31 11:35:44 ber Exp $
++// $Id$
+ 
+ /**
+  * Implementation of hook_help
+@@ -146,7 +146,11 @@ function tagadelic_page_list($vocs) {
+ 
+   foreach ($vocs as $vid) {
+     $vocabulary = taxonomy_vocabulary_load($vid);
+-
++    
++    //Clean out vocabulary, so that we don't have to leave security to our theme layer.
++    $vocabulary->description = filter_xss_admin($vocabulary->description);
++    $vocabulary->name = filter_xss_admin($vocabulary->name);
++    
+     $tags = tagadelic_get_weighted_tags(array($vocabulary->vid), variable_get('tagadelic_levels', 6), variable_get('tagadelic_page_amount', '60'));
+     $tags = tagadelic_sort_tags($tags);
+ 
+diff --git a/modules/acquia/tagadelic/translations/hu.po b/modules/acquia/tagadelic/translations/hu.po
+index 7e10ff7..989c5be 100644
+--- a/modules/acquia/tagadelic/translations/hu.po
++++ b/modules/acquia/tagadelic/translations/hu.po
+@@ -1,4 +1,4 @@
+-# $Id: hu.po,v 1.1.2.2 2008/04/28 22:20:45 goba Exp $
++# $Id$
+ #
+ # Hungarian translation of Drupal (tagadelic.module)
+ # Copyright Drupal.hu Fordítói Csapat <forditas [at] drupal.hu>
+diff --git a/modules/acquia/tagadelic/translations/ja.po b/modules/acquia/tagadelic/translations/ja.po
+index 7f26d94..25b75f3 100644
+--- a/modules/acquia/tagadelic/translations/ja.po
++++ b/modules/acquia/tagadelic/translations/ja.po
+@@ -1,4 +1,4 @@
+-# $Id: ja.po,v 1.1.2.1 2008/04/28 22:16:22 goba Exp $
++# $Id$
+ # -----------------------------------------------------------------------------
+ # Japanese translation of Drupal (tagadelic.module)
+ #
+diff --git a/modules/acquia/tagadelic/translations/nl.po b/modules/acquia/tagadelic/translations/nl.po
+index 96cc7d3..907010e 100644
+--- a/modules/acquia/tagadelic/translations/nl.po
++++ b/modules/acquia/tagadelic/translations/nl.po
+@@ -1,4 +1,4 @@
+-# $Id: nl.po,v 1.1.2.1 2008/04/28 22:16:22 goba Exp $
++# $Id$
+ #
+ # DUTCH translation of Drupal (tagadelic.module)
+ # Generated from file: tagadelic.module,v 1.36 2006/11/16 17:25:21 ber
+diff --git a/modules/acquia/tagadelic/translations/pl.po b/modules/acquia/tagadelic/translations/pl.po
+index da90939..46fa1af 100644
+--- a/modules/acquia/tagadelic/translations/pl.po
++++ b/modules/acquia/tagadelic/translations/pl.po
+@@ -1,4 +1,4 @@
+-# $Id: pl.po,v 1.1.2.2 2008/12/28 21:32:11 kuling Exp $
++# $Id$
+ #
+ # Polski / Polish translation of Drupal (tagadelic.module)
+ # Copyright 2008 Bartlomiej Opajdowski<bopajdowski@gmail.com>
+diff --git a/profiles/acquia/AcquiaDrupalLogo.png b/profiles/acquia/AcquiaDrupalLogo.png
+index 559b288..7dc8268 100644
+Binary files a/profiles/acquia/AcquiaDrupalLogo.png and b/profiles/acquia/AcquiaDrupalLogo.png differ

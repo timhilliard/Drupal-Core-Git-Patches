@@ -1,0 +1,3776 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index de4095d..2313c11 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,24 @@
+ 
++Drupal 7.10, 2011-12-05
++----------------------
++- Fixed Content-Language HTTP header to not cause issues with Drush 5.x.
++- Reduce memory usage of theme registry (performance).
++- Fixed PECL upload progress bar for FileField
++- Fixed running update.php doesn't always clear the cache.
++- Fixed PDO exceptions on long titles.
++- Fixed Overlay redirect does not include query string.
++- Fixed D6 modules satisfy D7 module dependencies.
++- Fixed the ordering of module hooks when using module_implements_alter().
++- Fixed "floating" submit buttons during AJAX requests.
++- Fixed timezone selected on install not propogating to admin account.
++- Added msgctx context to JS translation functions, for feature parity with t().
++- Profiles' .install files now available during hook_install_tasks().
++- Added test coverage of 7.0 -> 7.x upgrade path.
++- Numerous notice fixes.
++- Numerous documentation improvements.
++- Additional automated test coverage.
++
++
+ Drupal 7.9, 2011-10-26
+ ----------------------
+ - Critical fixes to OpenID to spec violations that could allow for
+diff --git a/MAINTAINERS.txt b/MAINTAINERS.txt
+index 30fa827..103eb5a 100644
+--- a/MAINTAINERS.txt
++++ b/MAINTAINERS.txt
+@@ -1,16 +1,14 @@
+ 
+-Drupal core is maintained by the community.  To participate, go to
+-
+-  http://drupal.org/contribute
+-
+-The people listed here have agreed to do more quality assurance work for
+-particular areas of Drupal.  All of them are subject to change.
+-
++Drupal core is built and maintained by the Drupal project community. Everyone is
++encouraged to submit issues and changes (patches) to improve Drupal, and to
++contribute in other ways -- see http://drupal.org/contribute to find out how.
+ 
+ Branch maintainers
+ ------------------
+ 
+-Drupal 7
++The Drupal Core branch maintainers oversee the development of Drupal as a whole.
++The branch mainainers for Drupal 7 are:
++
+ - Dries Buytaert 'dries' <http://drupal.org/user/1>
+ - Angela Byron 'webchick' <http://drupal.org/user/24967>
+ 
+@@ -18,6 +16,11 @@ Drupal 7
+ Component maintainers
+ ---------------------
+ 
++The Drupal Core component maintainers oversee the development of Drupal
++subsystems. See http://drupal.org/contribute/core-maintainers for more
++information on their responsibilities, and to find out how to become a component
++maintainer. Current component maintainers for Drupal 7:
++
+ Ajax system
+ - Alex Bronstein 'effulgentsia' <http://drupal.org/user/78040>
+ - Randy Fay 'rfay' <http://drupal.org/user/30906>
+diff --git a/includes/ajax.inc b/includes/ajax.inc
+index d70808e..cda55b4 100644
+--- a/includes/ajax.inc
++++ b/includes/ajax.inc
+@@ -262,19 +262,13 @@ function ajax_render($commands = array()) {
+     }
+   }
+ 
+-  // Settings are handled separately, later in this function, so that changes to
+-  // the ajaxPageState setting that occur during drupal_get_css() and
+-  // drupal_get_js() get included, and because the jQuery.extend() code produced
+-  // by drupal_get_js() for adding settings isn't appropriate during an Ajax
+-  // response, because it does not pass TRUE for the "deep" parameter, and
+-  // therefore, can clobber existing settings on the page.
++  // Render the HTML to load these files, and add AJAX commands to insert this
++  // HTML in the page. We pass TRUE as the $skip_alter argument to prevent the
++  // data from being altered again, as we already altered it above. Settings are
++  // handled separately, afterwards.
+   if (isset($items['js']['settings'])) {
+     unset($items['js']['settings']);
+   }
+-
+-  // Render the HTML to load these files, and add Ajax commands to insert this
+-  // HTML in the page. We pass TRUE as the $skip_alter argument to prevent the
+-  // data from being altered again, as we already altered it above.
+   $styles = drupal_get_css($items['css'], TRUE);
+   $scripts_footer = drupal_get_js('footer', $items['js'], TRUE);
+   $scripts_header = drupal_get_js('header', $items['js'], TRUE);
+@@ -293,11 +287,10 @@ function ajax_render($commands = array()) {
+     $commands = array_merge($extra_commands, $commands);
+   }
+ 
++  // Now add a command to merge changes and additions to Drupal.settings.
+   $scripts = drupal_add_js();
+   if (!empty($scripts['settings'])) {
+     $settings = $scripts['settings'];
+-    // Automatically extract any settings added via drupal_add_js() and make
+-    // them the first command.
+     array_unshift($commands, ajax_command_settings(call_user_func_array('array_merge_recursive', $settings['data']), TRUE));
+   }
+ 
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index 147aacc..d63a59b 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -8,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '7.9');
++define('VERSION', '7.10');
+ 
+ /**
+  * Core API compatibility.
+@@ -191,10 +191,14 @@ define('LANGUAGE_LTR', 0);
+ define('LANGUAGE_RTL', 1);
+ 
+ /**
+- * For convenience, define a short form of the request time global.
++ * Time of the current request in seconds elapsed since the Unix Epoch.
+  *
+- * REQUEST_TIME is a float with microseconds since PHP 5.4.0, but float
+- * timestamps confuses most of the PHP functions (including date_create()).
++ * This differs from $_SERVER['REQUEST_TIME'], which is stored as a float
++ * since PHP 5.4.0. Float timestamps confuse most PHP functions
++ * (including date_create()).
++ *
++ * @see http://php.net/manual/reserved.variables.server.php
++ * @see http://php.net/manual/function.time.php
+  */
+ define('REQUEST_TIME', (int) $_SERVER['REQUEST_TIME']);
+ 
+@@ -828,6 +832,11 @@ function drupal_get_filename($type, $name, $filename = NULL) {
+   // drupal_static().
+   static $files = array(), $dirs = array();
+ 
++  // Profiles are a special case: they have a fixed location and naming.
++  if ($type == 'profile') {
++    $profile_filename = "profiles/$name/$name.profile";
++    $files[$type][$name] = file_exists($profile_filename) ? $profile_filename : FALSE;
++  }
+   if (!isset($files[$type])) {
+     $files[$type] = array();
+   }
+@@ -2498,7 +2507,6 @@ function get_t() {
+  * Initialize all the defined language types.
+  */
+ function drupal_language_initialize() {
+-  global $language;
+   $types = language_types();
+ 
+   // Ensure the language is correctly returned, even without multilanguage
+@@ -2518,9 +2526,6 @@ function drupal_language_initialize() {
+     // environments.
+     bootstrap_invoke_all('language_init');
+   }
+-
+-  // Send appropriate HTTP-Header for browsers and search engines.
+-  header('Content-Language: ' . $language->language);
+ }
+ 
+ /**
+diff --git a/includes/common.inc b/includes/common.inc
+index 3a3d274..f95597f 100644
+--- a/includes/common.inc
++++ b/includes/common.inc
+@@ -832,7 +832,7 @@ function drupal_http_request($url, array $options = array()) {
+     // Mark that this request failed. This will trigger a check of the web
+     // server's ability to make outgoing HTTP requests the next time that
+     // requirements checking is performed.
+-    // See system_requirements()
++    // See system_requirements().
+     variable_set('drupal_http_request_fails', TRUE);
+ 
+     return $result;
+@@ -1331,21 +1331,21 @@ function filter_xss($string, $allowed_tags = array('a', 'em', 'strong', 'cite',
+   if (!drupal_validate_utf8($string)) {
+     return '';
+   }
+-  // Store the text format
++  // Store the text format.
+   _filter_xss_split($allowed_tags, TRUE);
+-  // Remove NULL characters (ignored by some browsers)
++  // Remove NULL characters (ignored by some browsers).
+   $string = str_replace(chr(0), '', $string);
+-  // Remove Netscape 4 JS entities
++  // Remove Netscape 4 JS entities.
+   $string = preg_replace('%&\s*\{[^}]*(\}\s*;?|$)%', '', $string);
+ 
+-  // Defuse all HTML entities
++  // Defuse all HTML entities.
+   $string = str_replace('&', '&amp;', $string);
+-  // Change back only well-formed entities in our whitelist
+-  // Decimal numeric entities
++  // Change back only well-formed entities in our whitelist:
++  // Decimal numeric entities.
+   $string = preg_replace('/&amp;#([0-9]+;)/', '&#\1', $string);
+-  // Hexadecimal numeric entities
++  // Hexadecimal numeric entities.
+   $string = preg_replace('/&amp;#[Xx]0*((?:[0-9A-Fa-f]{2})+;)/', '&#x\1', $string);
+-  // Named entities
++  // Named entities.
+   $string = preg_replace('/&amp;([A-Za-z][A-Za-z0-9]*;)/', '&\1', $string);
+ 
+   return preg_replace_callback('%
+@@ -1384,16 +1384,16 @@ function _filter_xss_split($m, $store = FALSE) {
+   $string = $m[1];
+ 
+   if (substr($string, 0, 1) != '<') {
+-    // We matched a lone ">" character
++    // We matched a lone ">" character.
+     return '&gt;';
+   }
+   elseif (strlen($string) == 1) {
+-    // We matched a lone "<" character
++    // We matched a lone "<" character.
+     return '&lt;';
+   }
+ 
+   if (!preg_match('%^<\s*(/\s*)?([a-zA-Z0-9]+)([^>]*)>?|(<!--.*?-->)$%', $string, $matches)) {
+-    // Seriously malformed
++    // Seriously malformed.
+     return '';
+   }
+ 
+@@ -1407,7 +1407,7 @@ function _filter_xss_split($m, $store = FALSE) {
+   }
+ 
+   if (!isset($allowed_html[strtolower($elem)])) {
+-    // Disallowed HTML element
++    // Disallowed HTML element.
+     return '';
+   }
+ 
+@@ -1423,7 +1423,7 @@ function _filter_xss_split($m, $store = FALSE) {
+   $attrlist = preg_replace('%(\s?)/\s*$%', '\1', $attrlist, -1, $count);
+   $xhtml_slash = $count ? ' /' : '';
+ 
+-  // Clean up attributes
++  // Clean up attributes.
+   $attr2 = implode(' ', _filter_xss_attributes($attrlist));
+   $attr2 = preg_replace('/[<>]/', '', $attr2);
+   $attr2 = strlen($attr2) ? ' ' . $attr2 : '';
+@@ -1448,7 +1448,7 @@ function _filter_xss_attributes($attr) {
+ 
+     switch ($mode) {
+       case 0:
+-        // Attribute name, href for instance
++        // Attribute name, href for instance.
+         if (preg_match('/^([-a-zA-Z]+)/', $attr, $match)) {
+           $attrname = strtolower($match[1]);
+           $skip = ($attrname == 'style' || substr($attrname, 0, 2) == 'on');
+@@ -1458,7 +1458,7 @@ function _filter_xss_attributes($attr) {
+         break;
+ 
+       case 1:
+-        // Equals sign or valueless ("selected")
++        // Equals sign or valueless ("selected").
+         if (preg_match('/^\s*=\s*/', $attr)) {
+           $working = 1; $mode = 2;
+           $attr = preg_replace('/^\s*=\s*/', '', $attr);
+@@ -1475,7 +1475,7 @@ function _filter_xss_attributes($attr) {
+         break;
+ 
+       case 2:
+-        // Attribute value, a URL after href= for instance
++        // Attribute value, a URL after href= for instance.
+         if (preg_match('/^"([^"]*)"(\s+|$)/', $attr, $match)) {
+           $thisval = filter_xss_bad_protocol($match[1]);
+ 
+@@ -1512,7 +1512,7 @@ function _filter_xss_attributes($attr) {
+     }
+ 
+     if ($working == 0) {
+-      // not well formed, remove and try again
++      // Not well formed; remove and try again.
+       $attr = preg_replace('/
+         ^
+         (
+@@ -2466,6 +2466,10 @@ function drupal_deliver_html_page($page_callback_result) {
+     drupal_add_http_header('Content-Type', 'text/html; charset=utf-8');
+   }
+ 
++  // Send appropriate HTTP-Header for browsers and search engines.
++  global $language;
++  drupal_add_http_header('Content-Language', $language->language);
++
+   // Menu status constants are integers; page content is a string or array.
+   if (is_int($page_callback_result)) {
+     // @todo: Break these up into separate functions?
+@@ -5040,7 +5044,7 @@ function drupal_cron_run() {
+     foreach ($queues as $queue_name => $info) {
+       DrupalQueue::get($queue_name)->createQueue();
+     }
+-    // Register shutdown callback
++    // Register shutdown callback.
+     drupal_register_shutdown_function('drupal_cron_cleanup');
+ 
+     // Iterate through the modules calling their cron handlers (if any):
+@@ -5054,7 +5058,7 @@ function drupal_cron_run() {
+       }
+     }
+ 
+-    // Record cron time
++    // Record cron time.
+     variable_set('cron_last', REQUEST_TIME);
+     watchdog('cron', 'Cron run completed.', array(), WATCHDOG_NOTICE);
+ 
+@@ -5089,7 +5093,7 @@ function drupal_cron_cleanup() {
+   if (variable_get('cron_semaphore', FALSE)) {
+     watchdog('cron', 'Cron run exceeded the time limit and was aborted.', array(), WATCHDOG_WARNING);
+ 
+-    // Release cron semaphore
++    // Release cron semaphore.
+     variable_del('cron_semaphore');
+   }
+ }
+@@ -5158,14 +5162,14 @@ function drupal_system_listing($mask, $directory, $key = 'name', $min_depth = 1)
+     $searchdir[] = "profiles/$profile/$directory";
+   }
+ 
+-  // Always search sites/all/* as well as the global directories
++  // Always search sites/all/* as well as the global directories.
+   $searchdir[] = 'sites/all/' . $directory;
+ 
+   if (file_exists("$config/$directory")) {
+     $searchdir[] = "$config/$directory";
+   }
+ 
+-  // Get current list of items
++  // Get current list of items.
+   if (!function_exists('file_scan_directory')) {
+     require_once DRUPAL_ROOT . '/includes/file.inc';
+   }
+@@ -6417,7 +6421,7 @@ function drupal_array_nested_key_exists(array $array, array $parents) {
+  */
+ function drupal_common_theme() {
+   return array(
+-    // theme.inc
++    // From theme.inc.
+     'html' => array(
+       'render element' => 'page',
+       'template' => 'html',
+@@ -6493,7 +6497,7 @@ function drupal_common_theme() {
+     'html_tag' => array(
+       'render element' => 'element',
+     ),
+-    // from theme.maintenance.inc
++    // From theme.maintenance.inc.
+     'maintenance_page' => array(
+       'variables' => array('content' => NULL, 'show_messages' => TRUE),
+       'template' => 'maintenance-page',
+@@ -6513,7 +6517,7 @@ function drupal_common_theme() {
+     'authorize_report' => array(
+       'variables' => array('messages' => array()),
+     ),
+-    // from pager.inc
++    // From pager.inc.
+     'pager' => array(
+       'variables' => array('tags' => array(), 'element' => 0, 'parameters' => array(), 'quantity' => 9),
+     ),
+@@ -6532,7 +6536,7 @@ function drupal_common_theme() {
+     'pager_link' => array(
+       'variables' => array('text' => NULL, 'page_new' => NULL, 'element' => NULL, 'parameters' => array(), 'attributes' => array()),
+     ),
+-    // from menu.inc
++    // From menu.inc.
+     'menu_link' => array(
+       'render element' => 'element',
+     ),
+@@ -6548,7 +6552,7 @@ function drupal_common_theme() {
+     'menu_local_tasks' => array(
+       'variables' => array('primary' => array(), 'secondary' => array()),
+     ),
+-    // from form.inc
++    // From form.inc.
+     'select' => array(
+       'render element' => 'element',
+     ),
+@@ -7026,19 +7030,19 @@ function drupal_parse_info_format($data) {
+     )\s*$                           # Stop at the next end of a line, ignoring trailing whitespace
+     @msx', $data, $matches, PREG_SET_ORDER)) {
+     foreach ($matches as $match) {
+-      // Fetch the key and value string
++      // Fetch the key and value string.
+       $i = 0;
+       foreach (array('key', 'value1', 'value2', 'value3') as $var) {
+         $$var = isset($match[++$i]) ? $match[$i] : '';
+       }
+       $value = stripslashes(substr($value1, 1, -1)) . stripslashes(substr($value2, 1, -1)) . $value3;
+ 
+-      // Parse array syntax
++      // Parse array syntax.
+       $keys = preg_split('/\]?\[/', rtrim($key, ']'));
+       $last = array_pop($keys);
+       $parent = &$info;
+ 
+-      // Create nested arrays
++      // Create nested arrays.
+       foreach ($keys as $key) {
+         if ($key == '') {
+           $key = count($parent);
+@@ -7054,7 +7058,7 @@ function drupal_parse_info_format($data) {
+         $value = $constants[$value];
+       }
+ 
+-      // Insert actual value
++      // Insert actual value.
+       if ($last == '') {
+         $last = count($parent);
+       }
+diff --git a/includes/install.core.inc b/includes/install.core.inc
+index a74dfdf..ec3a853 100644
+--- a/includes/install.core.inc
++++ b/includes/install.core.inc
+@@ -570,6 +570,12 @@ function install_tasks($install_state) {
+ 
+   // Now add any tasks defined by the installation profile.
+   if (!empty($install_state['parameters']['profile'])) {
++    // Load the profile install file, because it is not always loaded when
++    // hook_install_tasks() is invoked (e.g. batch processing).
++    $profile_install_file = DRUPAL_ROOT . '/profiles/' . $install_state['parameters']['profile'] . '/' . $install_state['parameters']['profile'] . '.install';
++    if (file_exists($profile_install_file)) {
++      include_once $profile_install_file;
++    }
+     $function = $install_state['parameters']['profile'] . '_install_tasks';
+     if (function_exists($function)) {
+       $result = $function($install_state);
+@@ -595,7 +601,7 @@ function install_tasks($install_state) {
+   // Allow the installation profile to modify the full list of tasks.
+   if (!empty($install_state['parameters']['profile'])) {
+     $profile_file = DRUPAL_ROOT . '/profiles/' . $install_state['parameters']['profile'] . '/' . $install_state['parameters']['profile'] . '.profile';
+-    if (is_file($profile_file)) {
++    if (file_exists($profile_file)) {
+       include_once $profile_file;
+       $function = $install_state['parameters']['profile'] . '_install_tasks_alter';
+       if (function_exists($function)) {
+@@ -710,8 +716,10 @@ function install_display_output($output, $install_state) {
+  *
+  * @return
+  *   A themed status report, or an exception if there are requirement errors.
+- *   Otherwise, no output is returned, so that the next task can be run
+- *   in the same page request.
++ *   If there are only requirement warnings, a themed status report is shown
++ *   initially, but the user is allowed to bypass it by providing 'continue=1'
++ *   in the URL. Otherwise, no output is returned, so that the next task can be
++ *   run in the same page request.
+  */
+ function install_verify_requirements(&$install_state) {
+   // Check the installation requirements for Drupal and this profile.
+@@ -723,22 +731,30 @@ function install_verify_requirements(&$install_state) {
+   // Check the severity of the requirements reported.
+   $severity = drupal_requirements_severity($requirements);
+ 
+-  if ($severity == REQUIREMENT_ERROR) {
++  // If there are errors, always display them. If there are only warnings, skip
++  // them if the user has provided a URL parameter acknowledging the warnings
++  // and indicating a desire to continue anyway. See drupal_requirements_url().
++  if ($severity == REQUIREMENT_ERROR || ($severity == REQUIREMENT_WARNING && empty($install_state['parameters']['continue']))) {
+     if ($install_state['interactive']) {
+       drupal_set_title(st('Requirements problem'));
+       $status_report = theme('status_report', array('requirements' => $requirements));
+-      $status_report .= st('Check the error messages and <a href="!url">proceed with the installation</a>.', array('!url' => check_url(request_uri())));
++      $status_report .= st('Check the error messages and <a href="!url">proceed with the installation</a>.', array('!url' => check_url(drupal_requirements_url($severity))));
+       return $status_report;
+     }
+     else {
+-      // Throw an exception showing all unmet requirements.
++      // Throw an exception showing any unmet requirements.
+       $failures = array();
+       foreach ($requirements as $requirement) {
++        // Skip warnings altogether for non-interactive installations; these
++        // proceed in a single request so there is no good opportunity (and no
++        // good method) to warn the user anyway.
+         if (isset($requirement['severity']) && $requirement['severity'] == REQUIREMENT_ERROR) {
+           $failures[] = $requirement['title'] . ': ' . $requirement['value'] . "\n\n" . $requirement['description'];
+         }
+       }
+-      throw new Exception(implode("\n\n", $failures));
++      if (!empty($failures)) {
++        throw new Exception(implode("\n\n", $failures));
++      }
+     }
+   }
+ }
+@@ -1290,7 +1306,7 @@ function install_already_done_error() {
+  */
+ function install_load_profile(&$install_state) {
+   $profile_file = DRUPAL_ROOT . '/profiles/' . $install_state['parameters']['profile'] . '/' . $install_state['parameters']['profile'] . '.profile';
+-  if (is_file($profile_file)) {
++  if (file_exists($profile_file)) {
+     include_once $profile_file;
+     $install_state['profile_info'] = install_profile_info($install_state['parameters']['profile'], $install_state['parameters']['locale']);
+   }
+@@ -1408,13 +1424,6 @@ function install_import_locales(&$install_state) {
+  *   The form API definition for the site configuration form.
+  */
+ function install_configure_form($form, &$form_state, &$install_state) {
+-  if (variable_get('site_name', FALSE) || variable_get('site_mail', FALSE)) {
+-    // Site already configured: This should never happen, means re-running the
+-    // installer, possibly by an attacker after the 'install_task' variable got
+-    // accidentally blown somewhere. Stop it now.
+-    throw new Exception(install_already_done_error());
+-  }
+-
+   drupal_set_title(st('Configure site'));
+ 
+   // Warn about settings.php permissions risk
+@@ -1816,7 +1825,7 @@ function install_configure_form_submit($form, &$form_state) {
+ 
+   // We precreated user 1 with placeholder values. Let's save the real values.
+   $account = user_load(1);
+-  $merge_data = array('init' => $form_state['values']['account']['mail'], 'roles' => !empty($account->roles) ? $account->roles : array(), 'status' => 1);
++  $merge_data = array('init' => $form_state['values']['account']['mail'], 'roles' => !empty($account->roles) ? $account->roles : array(), 'status' => 1, 'timezone' => $form_state['values']['date_default_timezone']);
+   user_save($account, array_merge($form_state['values']['account'], $merge_data));
+   // Load global $user and perform final login tasks.
+   $user = user_load(1);
+diff --git a/includes/install.inc b/includes/install.inc
+index 516e146..6411f8f 100644
+--- a/includes/install.inc
++++ b/includes/install.inc
+@@ -999,7 +999,6 @@ function drupal_install_fix_file($file, $mask, $message = TRUE) {
+   }
+ }
+ 
+-
+ /**
+  * Send the user to a different installer page.
+  *
+@@ -1017,6 +1016,68 @@ function install_goto($path) {
+ }
+ 
+ /**
++ * Returns the URL of the current script, with modified query parameters.
++ *
++ * This function can be called by low-level scripts (such as install.php and
++ * update.php) and returns the URL of the current script. Existing query
++ * parameters are preserved by default, but new ones can optionally be merged
++ * in.
++ *
++ * This function is used when the script must maintain certain query parameters
++ * over multiple page requests in order to work correctly. In such cases (for
++ * example, update.php, which requires the 'continue=1' parameter to remain in
++ * the URL throughout the update process if there are any requirement warnings
++ * that need to be bypassed), using this function to generate the URL for links
++ * to the next steps of the script ensures that the links will work correctly.
++ *
++ * @param $query
++ *   (optional) An array of query parameters to merge in to the existing ones.
++ *
++ * @return
++ *   The URL of the current script, with query parameters modified by the
++ *   passed-in $query. The URL is not sanitized, so it still needs to be run
++ *   through check_url() if it will be used as an HTML attribute value.
++ *
++ * @see drupal_requirements_url()
++ */
++function drupal_current_script_url($query = array()) {
++  $uri = $_SERVER['SCRIPT_NAME'];
++  $query = array_merge(drupal_get_query_parameters(), $query);
++  if (!empty($query)) {
++    $uri .= '?' . drupal_http_build_query($query);
++  }
++  return $uri;
++}
++
++/**
++ * Returns a URL for proceeding to the next page after a requirements problem.
++ *
++ * This function can be called by low-level scripts (such as install.php and
++ * update.php) and returns a URL that can be used to attempt to proceed to the
++ * next step of the script.
++ *
++ * @param $severity
++ *   The severity of the requirements problem, as returned by
++ *   drupal_requirements_severity().
++ *
++ * @return
++ *   A URL for attempting to proceed to the next step of the script. The URL is
++ *   not sanitized, so it still needs to be run through check_url() if it will
++ *   be used as an HTML attribute value.
++ *
++ * @see drupal_current_script_url()
++ */
++function drupal_requirements_url($severity) {
++  $query = array();
++  // If there are no errors, only warnings, append 'continue=1' to the URL so
++  // the user can bypass this screen on the next page load.
++  if ($severity == REQUIREMENT_WARNING) {
++    $query['continue'] = 1;
++  }
++  return drupal_current_script_url($query);
++}
++
++/**
+  * Functional equivalent of t(), used when some systems are not available.
+  *
+  * Used during the install process, when database, theme, and localization
+diff --git a/includes/iso.inc b/includes/iso.inc
+index dabbefd..a88de57 100644
+--- a/includes/iso.inc
++++ b/includes/iso.inc
+@@ -74,6 +74,7 @@ function _country_get_predefined_list() {
+     'CO' => $t('Colombia'),
+     'CR' => $t('Costa Rica'),
+     'CU' => $t('Cuba'),
++    'CW' => $t('Curaçao'),
+     'CV' => $t('Cape Verde'),
+     'CX' => $t('Christmas Island'),
+     'CY' => $t('Cyprus'),
+diff --git a/includes/locale.inc b/includes/locale.inc
+index 6ebb897..a00887d 100644
+--- a/includes/locale.inc
++++ b/includes/locale.inc
+@@ -43,6 +43,36 @@ define('LOCALE_LANGUAGE_NEGOTIATION_SESSION', 'locale-session');
+ define('LOCALE_JS_STRING', '(?:(?:\'(?:\\\\\'|[^\'])*\'|"(?:\\\\"|[^"])*")(?:\s*\+\s*)?)+');
+ 
+ /**
++ * Regular expression pattern used to match simple JS object literal.
++ *
++ * This pattern matches a basic JS object, but will fail on an object with
++ * nested objects. Used in JS file parsing for string arg processing.
++ */
++define('LOCALE_JS_OBJECT', '\{.*?\}');
++
++/**
++ * Regular expression to match an object containing a key 'context'.
++ *
++ * Pattern to match a JS object containing a 'context key' with a string value,
++ * which is captured. Will fail if there are nested objects.
++ */
++define('LOCALE_JS_OBJECT_CONTEXT', '
++  \{              # match object literal start
++  .*?             # match anything, non-greedy
++  (?:             # match a form of "context"
++    \'context\'
++    |
++    "context"
++    |
++    context
++  )
++  \s*:\s*         # match key-value separator ":"
++  (' . LOCALE_JS_STRING . ')  # match context string
++  .*?             # match anything, non-greedy
++  \}              # match end of object literal
++');
++
++/**
+  * Translation import mode overwriting all existing translations
+  * if new translated version available.
+  */
+@@ -1447,6 +1477,9 @@ function _locale_parse_js_file($filepath) {
+     [^\w]Drupal\s*\.\s*t\s*                       # match "Drupal.t" with whitespace
+     \(\s*                                         # match "(" argument list start
+     (' . LOCALE_JS_STRING . ')\s*                 # capture string argument
++    (?:,\s*' . LOCALE_JS_OBJECT . '\s*            # optionally capture str args
++      (?:,\s*' . LOCALE_JS_OBJECT_CONTEXT . '\s*) # optionally capture context
++    ?)?                                           # close optional args
+     [,\)]                                         # match ")" or "," to finish
+     ~sx', $file, $t_matches);
+ 
+@@ -1474,55 +1507,73 @@ function _locale_parse_js_file($filepath) {
+         (?:\s*\+\s*)?             # match "+" with possible whitespace, for str concat
+       )+                          # match multiple because we supports concatenating strs
+     )\s*                          # end capturing of plural string argument
++    (?:,\s*' . LOCALE_JS_OBJECT . '\s*          # optionally capture string args
++      (?:,\s*' . LOCALE_JS_OBJECT_CONTEXT . '\s*)?  # optionally capture context
++    )?
+     [,\)]
+     ~sx', $file, $plural_matches);
+ 
++  $matches = array();
+ 
+-  // Loop through all matches and process them.
+-  $all_matches = array_merge($plural_matches[1], $t_matches[1]);
+-  foreach ($all_matches as $key => $string) {
+-    $strings = array($string);
++  // Add strings from Drupal.t().
++  foreach ($t_matches[1] as $key => $string) {
++    $matches[] = array(
++      'string'  => $string,
++      'context' => $t_matches[2][$key],
++    );
++  }
++
++  // Add string from Drupal.formatPlural().
++  foreach ($plural_matches[1] as $key => $string) {
++    $matches[] = array(
++      'string'  => $string,
++      'context' => $plural_matches[3][$key],
++    );
+ 
+     // If there is also a plural version of this string, add it to the strings array.
+     if (isset($plural_matches[2][$key])) {
+-      $strings[] = $plural_matches[2][$key];
+-    }
+-
+-    foreach ($strings as $key => $string) {
+-      // Remove the quotes and string concatenations from the string.
+-      $string = implode('', preg_split('~(?<!\\\\)[\'"]\s*\+\s*[\'"]~s', substr($string, 1, -1)));
+-
+-      $source = db_query("SELECT lid, location FROM {locales_source} WHERE source = :source AND textgroup = 'default'", array(':source' => $string))->fetchObject();
+-      if ($source) {
+-        // We already have this source string and now have to add the location
+-        // to the location column, if this file is not yet present in there.
+-        $locations = preg_split('~\s*;\s*~', $source->location);
+-
+-        if (!in_array($filepath, $locations)) {
+-          $locations[] = $filepath;
+-          $locations = implode('; ', $locations);
+-
+-          // Save the new locations string to the database.
+-          db_update('locales_source')
+-            ->fields(array(
+-              'location' => $locations,
+-            ))
+-            ->condition('lid', $source->lid)
+-            ->execute();
+-        }
+-      }
+-      else {
+-        // We don't have the source string yet, thus we insert it into the database.
+-        db_insert('locales_source')
++      $matches[] = array(
++        'string'  => $plural_matches[2][$key],
++        'context' => $plural_matches[3][$key],
++      );
++    }
++  }
++
++  foreach ($matches as $key => $match) {
++    // Remove the quotes and string concatenations from the string.
++    $string = implode('', preg_split('~(?<!\\\\)[\'"]\s*\+\s*[\'"]~s', substr($match['string'], 1, -1)));
++    $context = implode('', preg_split('~(?<!\\\\)[\'"]\s*\+\s*[\'"]~s', substr($match['context'], 1, -1)));
++
++    $source = db_query("SELECT lid, location FROM {locales_source} WHERE source = :source AND context = :context AND textgroup = 'default'", array(':source' => $string, ':context' => $context))->fetchObject();
++    if ($source) {
++      // We already have this source string and now have to add the location
++      // to the location column, if this file is not yet present in there.
++      $locations = preg_split('~\s*;\s*~', $source->location);
++
++      if (!in_array($filepath, $locations)) {
++        $locations[] = $filepath;
++        $locations = implode('; ', $locations);
++
++        // Save the new locations string to the database.
++        db_update('locales_source')
+           ->fields(array(
+-            'location' => $filepath,
+-            'source' => $string,
+-            'context' => '',
+-            'textgroup' => 'default',
++            'location' => $locations,
+           ))
++          ->condition('lid', $source->lid)
+           ->execute();
+       }
+     }
++    else {
++      // We don't have the source string yet, thus we insert it into the database.
++      db_insert('locales_source')
++        ->fields(array(
++          'location' => $filepath,
++          'source' => $string,
++          'context' => $context,
++          'textgroup' => 'default',
++        ))
++        ->execute();
++    }
+   }
+ }
+ 
+@@ -1942,11 +1993,11 @@ function _locale_rebuild_js($langcode = NULL) {
+ 
+   // Construct the array for JavaScript translations.
+   // Only add strings with a translation to the translations array.
+-  $result = db_query("SELECT s.lid, s.source, t.translation FROM {locales_source} s INNER JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.location LIKE '%.js%' AND s.textgroup = :textgroup", array(':language' => $language->language, ':textgroup' => 'default'));
++  $result = db_query("SELECT s.lid, s.source, s.context, t.translation FROM {locales_source} s INNER JOIN {locales_target} t ON s.lid = t.lid AND t.language = :language WHERE s.location LIKE '%.js%' AND s.textgroup = :textgroup", array(':language' => $language->language, ':textgroup' => 'default'));
+ 
+   $translations = array();
+   foreach ($result as $data) {
+-    $translations[$data->source] = $data->translation;
++    $translations[$data->context][$data->source] = $data->translation;
+   }
+ 
+   // Construct the JavaScript file, if there are translations.
+diff --git a/includes/module.inc b/includes/module.inc
+index 66c77f5..3a019f2 100644
+--- a/includes/module.inc
++++ b/includes/module.inc
+@@ -952,10 +952,24 @@ function drupal_alter($type, &$data, &$context1 = NULL, &$context2 = NULL) {
+       }
+       // If any modules implement one of the extra hooks that do not implement
+       // the primary hook, we need to add them to the $modules array in their
+-      // appropriate order.
++      // appropriate order. module_implements() can only return ordered
++      // implementations of a single hook. To get the ordered implementations
++      // of multiple hooks, we mimic the module_implements() logic of first
++      // ordering by module_list(), and then calling
++      // drupal_alter('module_implements').
+       if (array_diff($extra_modules, $modules)) {
+-        // Order the modules by the order returned by module_list().
++        // Merge the arrays and order by module_list().
+         $modules = array_intersect(module_list(), array_merge($modules, $extra_modules));
++        // Since module_implements() already took care of loading the necessary
++        // include files, we can safely pass FALSE for the array values.
++        $implementations = array_fill_keys($modules, FALSE);
++        // Let modules adjust the order solely based on the primary hook. This
++        // ensures the same module order regardless of whether this if block
++        // runs. Calling drupal_alter() recursively in this way does not result
++        // in an infinite loop, because this call is for a single $type, so we
++        // won't end up in this code block again.
++        drupal_alter('module_implements', $implementations, $hook);
++        $modules = array_keys($implementations);
+       }
+       foreach ($modules as $module) {
+         // Since $modules is a merged array, for any given module, we do not
+diff --git a/includes/path.inc b/includes/path.inc
+index db60537..ed5b639 100644
+--- a/includes/path.inc
++++ b/includes/path.inc
+@@ -13,12 +13,12 @@
+  * Initialize the $_GET['q'] variable to the proper normal path.
+  */
+ function drupal_path_initialize() {
+-  if (!empty($_GET['q'])) {
+-    $_GET['q'] = drupal_get_normal_path($_GET['q']);
+-  }
+-  else {
+-    $_GET['q'] = drupal_get_normal_path(variable_get('site_frontpage', 'node'));
++  // Ensure $_GET['q'] is set before calling drupal_normal_path(), to support
++  // path caching with hook_url_inbound_alter().
++  if (empty($_GET['q'])) {
++    $_GET['q'] = variable_get('site_frontpage', 'node');
+   }
++  $_GET['q'] = drupal_get_normal_path($_GET['q']);
+ }
+ 
+ /**
+diff --git a/includes/theme.inc b/includes/theme.inc
+index 252eec0..3868334 100644
+--- a/includes/theme.inc
++++ b/includes/theme.inc
+@@ -237,18 +237,33 @@ function _drupal_theme_initialize($theme, $base_theme = array(), $registry_callb
+ /**
+  * Get the theme registry.
+  *
++ * @param $complete
++ *   Optional boolean to indicate whether to return the complete theme registry
++ *   array or an instance of the ThemeRegistry class. If TRUE, the complete
++ *   theme registry array will be returned. This is useful if you want to
++ *   foreach over the whole registry, use array_* functions or inspect it in a
++ *   debugger. If FALSE, an instance of the ThemeRegistry class will be
++ *   returned, this provides an ArrayObject which allows it to be accessed
++ *   with array syntax and  isset(), and should be more lightweight
++ *   than the full registry. Defaults to TRUE.
++ *
+  * @return
+- *   The theme registry array if it has been stored in memory, NULL otherwise.
++ *   The complete theme registry array, or an instance of the ThemeRegistry
++ *   class.
+  */
+-function theme_get_registry() {
+-  static $theme_registry = NULL;
++function theme_get_registry($complete = TRUE) {
++  static $theme_registry = array();
++  $key = (int) $complete;
+ 
+-  if (!isset($theme_registry)) {
++  if (!isset($theme_registry[$key])) {
+     list($callback, $arguments) = _theme_registry_callback();
+-    $theme_registry = call_user_func_array($callback, $arguments);
++    if (!$complete) {
++      $arguments[] = FALSE;
++    }
++    $theme_registry[$key] = call_user_func_array($callback, $arguments);
+   }
+ 
+-  return $theme_registry;
++  return $theme_registry[$key];
+ }
+ 
+ /**
+@@ -268,7 +283,7 @@ function _theme_registry_callback($callback = NULL, array $arguments = array())
+ }
+ 
+ /**
+- * Get the theme_registry cache from the database; if it doesn't exist, build it.
++ * Get the theme_registry cache; if it doesn't exist, build it.
+  *
+  * @param $theme
+  *   The loaded $theme object as returned by list_themes().
+@@ -277,23 +292,34 @@ function _theme_registry_callback($callback = NULL, array $arguments = array())
+  *   oldest first order.
+  * @param $theme_engine
+  *   The name of the theme engine.
++ * @param $complete
++ *   Whether to load the complete theme registry or an instance of the
++ *   ThemeRegistry class.
++ *
++ * @return
++ *   The theme registry array, or an instance of the ThemeRegistry class.
+  */
+-function _theme_load_registry($theme, $base_theme = NULL, $theme_engine = NULL) {
+-  // Check the theme registry cache; if it exists, use it.
+-  $cache = cache_get("theme_registry:$theme->name", 'cache');
+-  if (isset($cache->data)) {
+-    $registry = $cache->data;
++function _theme_load_registry($theme, $base_theme = NULL, $theme_engine = NULL, $complete = TRUE) {
++  if ($complete) {
++    // Check the theme registry cache; if it exists, use it.
++    $cached = cache_get("theme_registry:$theme->name");
++    if (isset($cached->data)) {
++      $registry = $cached->data;
++    }
++    else {
++      // If not, build one and cache it.
++      $registry = _theme_build_registry($theme, $base_theme, $theme_engine);
++      // Only persist this registry if all modules are loaded. This assures a
++      // complete set of theme hooks.
++      if (module_load_all(NULL)) {
++        _theme_save_registry($theme, $registry);
++      }
++    }
++    return $registry;
+   }
+   else {
+-    // If not, build one and cache it.
+-    $registry = _theme_build_registry($theme, $base_theme, $theme_engine);
+-   // Only persist this registry if all modules are loaded. This assures a
+-   // complete set of theme hooks.
+-    if (module_load_all(NULL)) {
+-      _theme_save_registry($theme, $registry);
+-    }
++    return new ThemeRegistry('theme_registry:runtime:' . $theme->name, 'cache');
+   }
+-  return $registry;
+ }
+ 
+ /**
+@@ -313,6 +339,104 @@ function drupal_theme_rebuild() {
+ }
+ 
+ /**
++ * Builds the run-time theme registry.
++ *
++ * Extends DrupalCacheArray to allow the theme registry to be accessed as a
++ * complete registry, while internally caching only the parts of the registry
++ * that are actually in use on the site. On cache misses the complete
++ * theme registry is loaded and used to update the run-time cache.
++ */
++class ThemeRegistry Extends DrupalCacheArray {
++
++  /**
++   * Whether the partial registry can be persisted to the cache.
++   *
++   * This is only allowed if all modules and the request method is GET. theme()
++   * should be very rarely called on POST requests and this avoids polluting
++   * the runtime cache.
++   */
++  protected $persistable;
++
++  /**
++   * The complete theme registry array.
++   */
++  protected $completeRegistry;
++
++  function __construct($cid, $bin) {
++    $this->cid = $cid;
++    $this->bin = $bin;
++    $this->persistable = module_load_all(NULL) && $_SERVER['REQUEST_METHOD'] == 'GET';
++
++    $data = array();
++    if ($this->persistable && $cached = cache_get($this->cid, $this->bin)) {
++      $data = $cached->data;
++    }
++    else {
++      $complete_registry = theme_get_registry();
++      if ($this->persistable) {
++        // If there is no runtime cache stored, fetch the full theme registry,
++        // but then initialize each value to NULL. This allows
++        // offsetExists() to function correctly on non-registered theme hooks
++        // without triggering a call to resolveCacheMiss().
++        $data = array_fill_keys(array_keys($complete_registry), NULL);
++        $this->set($this->cid, $data, $this->bin);
++        $this->completeRegistry = $complete_registry;
++      }
++      else {
++        $data = $complete_registry;
++      }
++    }
++    $this->storage = $data;
++  }
++
++  public function offsetExists($offset) {
++    // Since the theme registry allows for theme hooks to be requested that
++    // are not registered, just check the existence of the key in the registry.
++    // Use array_key_exists() here since a NULL value indicates that the theme
++    // hook exists but has not yet been requested.
++    return array_key_exists($offset, $this->storage);
++  }
++
++  public function offsetGet($offset) {
++    // If the offset is set but empty, it is a registered theme hook that has
++    // not yet been requested. Offsets that do not exist at all were not
++    // registered in hook_theme().
++    if (isset($this->storage[$offset])) {
++      return $this->storage[$offset];
++    }
++    elseif (array_key_exists($offset, $this->storage)) {
++      return $this->resolveCacheMiss($offset);
++    }
++  }
++
++  public function resolveCacheMiss($offset) {
++    if (!isset($this->completeRegistry)) {
++      $this->completeRegistry = theme_get_registry();
++    }
++    $this->storage[$offset] = $this->completeRegistry[$offset];
++    if ($this->persistable) {
++      $this->persist($offset);
++    }
++    return $this->storage[$offset];
++  }
++
++  public function set($cid, $data, $bin, $lock = TRUE) {
++    $lock_name = $cid . ':' . $bin;
++    if (!$lock || lock_acquire($lock_name)) {
++      if ($cached = cache_get($cid, $this->bin)) {
++        // Use array merge instead of union so that filled in values in $data
++        // overwrite empty values in the current cache.
++        $data = array_merge($cached->data, $data);
++      }
++      cache_set($cid, $data, $bin);
++      if ($lock) {
++        lock_release($lock_name);
++      }
++    }
++  }
++}
++
++/**
+  * Process a single implementation of hook_theme().
+  *
+  * @param $cache
+@@ -771,7 +895,7 @@ function theme($hook, $variables = array()) {
+ 
+   if (!isset($hooks)) {
+     drupal_theme_initialize();
+-    $hooks = theme_get_registry();
++    $hooks = theme_get_registry(FALSE);
+   }
+ 
+   // If an array of hook candidates were passed, use the first one that has an
+diff --git a/includes/utility.inc b/includes/utility.inc
+index df6c48f..d195bff 100644
+--- a/includes/utility.inc
++++ b/includes/utility.inc
+@@ -46,6 +46,13 @@ function drupal_var_export($var, $prefix = '') {
+       $output = "'" . $var . "'";
+     }
+   }
++  elseif (is_object($var) && get_class($var) === 'stdClass') {
++    // var_export() will export stdClass objects using an undefined
++    // magic method __set_state() leaving the export broken. This
++    // workaround avoids this by casting the object as an array for
++    // export and casting it back to an object when evaluated.
++    $output .= '(object) ' . drupal_var_export((array) $var, $prefix);
++  }
+   else {
+     $output = var_export($var, TRUE);
+   }
+diff --git a/misc/authorize.js b/misc/authorize.js
+index 66b7897..d522a5b 100644
+--- a/misc/authorize.js
++++ b/misc/authorize.js
+@@ -16,7 +16,6 @@ Drupal.behaviors.authorizeFileTransferForm = {
+ 
+     // Removes the float on the select box (used for non-JS interface).
+     if ($('.connection-settings-update-filetransfer-default-wrapper').length > 0) {
+-      console.log($('.connection-settings-update-filetransfer-default-wrapper'));
+       $('.connection-settings-update-filetransfer-default-wrapper').css('float', 'none');
+     }
+     // Hides the submit button for non-js users.
+diff --git a/misc/drupal.js b/misc/drupal.js
+index 7e2cc4d..7ae737c 100644
+--- a/misc/drupal.js
++++ b/misc/drupal.js
+@@ -177,13 +177,21 @@ Drupal.formatString = function(str, args) {
+  *   An object of replacements pairs to make after translation. Incidences
+  *   of any key in this array are replaced with the corresponding value.
+  *   See Drupal.formatString().
++ *
++ * @param options
++ *   - 'context' (defaults to the empty context): The context the source string
++ *     belongs to.
++ *
+  * @return
+  *   The translated string.
+  */
+-Drupal.t = function (str, args) {
++Drupal.t = function (str, args, options) {
++  options = options || {};
++  options.context = options.context || '';
++
+   // Fetch the localized version of the string.
+-  if (Drupal.locale.strings && Drupal.locale.strings[str]) {
+-    str = Drupal.locale.strings[str];
++  if (Drupal.locale.strings && Drupal.locale.strings[options.context] && Drupal.locale.strings[options.context][str]) {
++    str = Drupal.locale.strings[options.context][str];
+   }
+ 
+   if (args) {
+@@ -216,25 +224,27 @@ Drupal.t = function (str, args) {
+  *   See Drupal.formatString().
+  *   Note that you do not need to include @count in this array.
+  *   This replacement is done automatically for the plural case.
++ * @param options
++ *   The options to pass to the Drupal.t() function.
+  * @return
+  *   A translated string.
+  */
+-Drupal.formatPlural = function (count, singular, plural, args) {
++Drupal.formatPlural = function (count, singular, plural, args, options) {
+   var args = args || {};
+   args['@count'] = count;
+   // Determine the index of the plural form.
+   var index = Drupal.locale.pluralFormula ? Drupal.locale.pluralFormula(args['@count']) : ((args['@count'] == 1) ? 0 : 1);
+ 
+   if (index == 0) {
+-    return Drupal.t(singular, args);
++    return Drupal.t(singular, args, options);
+   }
+   else if (index == 1) {
+-    return Drupal.t(plural, args);
++    return Drupal.t(plural, args, options);
+   }
+   else {
+     args['@count[' + index + ']'] = args['@count'];
+     delete args['@count'];
+-    return Drupal.t(plural.replace('@count', '@count[' + index + ']'), args);
++    return Drupal.t(plural.replace('@count', '@count[' + index + ']'), args, options);
+   }
+ };
+ 
+diff --git a/modules/aggregator/aggregator.api.php b/modules/aggregator/aggregator.api.php
+index f31413c..ea11927 100644
+--- a/modules/aggregator/aggregator.api.php
++++ b/modules/aggregator/aggregator.api.php
+@@ -76,33 +76,29 @@ function hook_aggregator_fetch_info() {
+  * finally, it is passed to all active processors which manipulate or store the
+  * data.
+  *
+- * Modules that define this hook can be set as active parser on
++ * Modules that define this hook can be set as the active parser on
+  * admin/config/services/aggregator. Only one parser can be active at a time.
+  *
+  * @param $feed
+- *   The $feed object that describes the resource to be parsed.
+- *   $feed->source_string contains the raw feed data as a string. Parse data
+- *   from $feed->source_string and expose it to other modules as an array of
+- *   data items on $feed->items.
+- *
+- *   Feed format:
+- *   - $feed->description (string) - description of the feed
+- *   - $feed->image (string) - image for the feed
+- *   - $feed->etag (string) - value of feed's entity tag header field
+- *   - $feed->modified (UNIX timestamp) - value of feed's last modified header
+- *     field
+- *   - $feed->items (Array) - array of feed items.
+- *
+- *   By convention, the common format for a single feed item is:
+- *   $item[key-name] = value;
+- *
+- *   Recognized keys:
+- *   TITLE (string) - the title of a feed item
+- *   DESCRIPTION (string) - the description (body text) of a feed item
+- *   TIMESTAMP (UNIX timestamp) - the feed item's published time as UNIX timestamp
+- *   AUTHOR (string) - the feed item's author
+- *   GUID (string) - RSS/Atom global unique identifier
+- *   LINK (string) - the feed item's URL
++ *   An object describing the resource to be parsed: $feed->source_string
++ *   contains the raw feed data. The hook implementation should parse this data
++ *   and add the following properties to the $feed object:
++ *   - description: The human-readable description of the feed.
++ *   - link: A full URL that directly relates to the feed.
++ *   - image: An image URL used to display an image of the feed.
++ *   - etag: An entity tag from the HTTP header used for cache validation to
++ *     determine if the content has been changed.
++ *   - modified: The UNIX timestamp when the feed was last modified.
++ *   - items: An array of feed items. The common format for a single feed item
++ *     is an associative array containing:
++ *     - title: The human-readable title of the feed item.
++ *     - description: The full body text of the item or a summary.
++ *     - timestamp: The UNIX timestamp when the feed item was last published.
++ *     - author: The author of the feed item.
++ *     - guid: The global unique identifier (GUID) string that uniquely
++ *       identifies the item. If not available, the link is used to identify
++ *       the item.
++ *     - link: A full URL to the individual feed item.
+  *
+  * @return
+  *   TRUE if parsing was successful, FALSE otherwise.
+diff --git a/modules/block/block.test b/modules/block/block.test
+index 2166687..9639b2c 100644
+--- a/modules/block/block.test
++++ b/modules/block/block.test
+@@ -751,3 +751,39 @@ class BlockTemplateSuggestionsUnitTest extends DrupalUnitTestCase {
+     $this->assertEqual($variables2['theme_hook_suggestions'], array('block__footer', 'block__block', 'block__block__hyphen_test'), t('Hyphens (-) in block delta were replaced by underscore (_)'));
+   }
+ }
++
++/**
++ * Tests that hidden regions do not inherit blocks when a theme is enabled.
++ */
++class BlockHiddenRegionTestCase extends DrupalWebTestCase {
++  public static function getInfo() {
++    return array(
++      'name' => 'Blocks not in hidden region',
++      'description' => 'Checks that a newly enabled theme does not inherit blocks to its hidden regions.',
++      'group' => 'Block',
++    );
++  }
++
++  /**
++   * Tests that hidden regions do not inherit blocks when a theme is enabled.
++   */
++  function testBlockNotInHiddenRegion() {
++    // Create administrative user.
++    $admin_user = $this->drupalCreateUser(array('administer blocks', 'administer themes', 'search content'));
++    $this->drupalLogin($admin_user);
++
++    // Enable "block_test_theme" and set it as the default theme.
++    $theme = 'block_test_theme';
++    theme_enable(array($theme));
++    variable_set('theme_default', $theme);
++    menu_rebuild();
++
++    // Ensure that "block_test_theme" is set as the default theme.
++    $this->drupalGet('admin/structure/block');
++    $this->assertText('Block test theme(' . t('active tab') . ')', t('Default local task on blocks admin page is the block test theme.'));
++
++    // Ensure that the search form block is displayed.
++    $this->drupalGet('');
++    $this->assertText('Search form', t('Block was displayed on the front page.'));
++  }
++}
+diff --git a/modules/contextual/contextual-rtl.css b/modules/contextual/contextual-rtl.css
+index 96ffef5..aecbee0 100644
+--- a/modules/contextual/contextual-rtl.css
++++ b/modules/contextual/contextual-rtl.css
+@@ -1,3 +1,7 @@
++/**
++ * @file
++ * Stylesheet specific to right-to-left languages.
++ */
+ 
+ div.contextual-links-wrapper {
+   left: 5px;
+diff --git a/modules/contextual/contextual.css b/modules/contextual/contextual.css
+index fd71514..3829328 100644
+--- a/modules/contextual/contextual.css
++++ b/modules/contextual/contextual.css
+@@ -1,3 +1,7 @@
++/**
++ * @file
++ * Stylesheet for the Contextual module.
++ */
+ 
+ /**
+  * Contextual links regions.
+diff --git a/modules/contextual/contextual.js b/modules/contextual/contextual.js
+index ee5b7a0..ebe5091 100644
+--- a/modules/contextual/contextual.js
++++ b/modules/contextual/contextual.js
+@@ -1,9 +1,14 @@
++/**
++ * @file
++ * Attaches behaviors for the Contextual module.
++ */
++
+ (function ($) {
+ 
+ Drupal.contextualLinks = Drupal.contextualLinks || {};
+ 
+ /**
+- * Attach outline behavior for regions associated with contextual links.
++ * Attaches outline behavior for regions associated with contextual links.
+  */
+ Drupal.behaviors.contextualLinks = {
+   attach: function (context) {
+diff --git a/modules/contextual/contextual.module b/modules/contextual/contextual.module
+index 0d6b625..9514b71 100644
+--- a/modules/contextual/contextual.module
++++ b/modules/contextual/contextual.module
+@@ -77,21 +77,17 @@ function contextual_element_info() {
+ }
+ 
+ /**
+- * Template variable preprocessor for contextual links.
++ * Implements hook_preprocess().
+  *
+  * @see contextual_pre_render_links()
+  */
+ function contextual_preprocess(&$variables, $hook) {
+-  static $hooks;
+-
+   // Nothing to do here if the user is not permitted to access contextual links.
+   if (!user_access('access contextual links')) {
+     return;
+   }
+ 
+-  if (!isset($hooks)) {
+-    $hooks = theme_get_registry();
+-  }
++  $hooks = theme_get_registry(FALSE);
+ 
+   // Determine the primary theme function argument.
+   if (!empty($hooks[$hook]['variables'])) {
+@@ -136,6 +132,7 @@ function contextual_preprocess(&$variables, $hook) {
+  *   A renderable array representing contextual links.
+  *
+  * @see menu_contextual_links()
++ * @see contextual_element_info()
+  */
+ function contextual_pre_render_links($element) {
+   // Retrieve contextual menu links.
+diff --git a/modules/field/field.api.php b/modules/field/field.api.php
+index 74eae62..d0d5da9 100644
+--- a/modules/field/field.api.php
++++ b/modules/field/field.api.php
+@@ -74,8 +74,8 @@ function hook_field_extra_fields() {
+ function hook_field_extra_fields_alter(&$info) {
+   // Force node title to always be at the top of the list by default.
+   foreach (node_type_get_types() as $bundle) {
+-    if (isset($info['node'][$bundle->type]['title'])) {
+-      $info['node'][$bundle->type]['title']['weight'] = -20;
++    if (isset($info['node'][$bundle->type]['form']['title'])) {
++      $info['node'][$bundle->type]['form']['title']['weight'] = -20;
+     }
+   }
+ }
+diff --git a/modules/field_ui/field_ui.admin.inc b/modules/field_ui/field_ui.admin.inc
+index 693e815..fa19afc 100644
+--- a/modules/field_ui/field_ui.admin.inc
++++ b/modules/field_ui/field_ui.admin.inc
+@@ -799,7 +799,7 @@ function field_ui_field_overview_form_submit($form, &$form_state) {
+       $form_state['fields_added']['_add_new_field'] = $field['field_name'];
+     }
+     catch (Exception $e) {
+-      drupal_set_message(t('There was a problem creating field %label: @message.', array('%label' => $instance['label'], '@message' => $e->getMessage())), 'error');
++      drupal_set_message(t('There was a problem creating field %label: !message', array('%label' => $instance['label'], '!message' => $e->getMessage())), 'error');
+     }
+   }
+ 
+@@ -808,7 +808,7 @@ function field_ui_field_overview_form_submit($form, &$form_state) {
+     $values = $form_values['_add_existing_field'];
+     $field = field_info_field($values['field_name']);
+     if (!empty($field['locked'])) {
+-      drupal_set_message(t('The field %label cannot be added because it is locked.', array('%label' => $values['label'])));
++      drupal_set_message(t('The field %label cannot be added because it is locked.', array('%label' => $values['label'])), 'error');
+     }
+     else {
+       $instance = array(
+@@ -1670,7 +1670,7 @@ function field_ui_widget_type_form_submit($form, &$form_state) {
+     drupal_set_message(t('Changed the widget for field %label.', array('%label' => $instance['label'])));
+   }
+   catch (Exception $e) {
+-    drupal_set_message(t('There was a problem changing the widget for field %label.', array('%label' => $instance['label'])));
++    drupal_set_message(t('There was a problem changing the widget for field %label.', array('%label' => $instance['label'])), 'error');
+   }
+ 
+   $form_state['redirect'] = field_ui_next_destination($entity_type, $bundle);
+@@ -1727,7 +1727,7 @@ function field_ui_field_delete_form_submit($form, &$form_state) {
+     drupal_set_message(t('The field %field has been deleted from the %type content type.', array('%field' => $instance['label'], '%type' => $bundle_label)));
+   }
+   else {
+-    drupal_set_message(t('There was a problem removing the %field from the %type content type.', array('%field' => $instance['label'], '%type' => $bundle_label)));
++    drupal_set_message(t('There was a problem removing the %field from the %type content type.', array('%field' => $instance['label'], '%type' => $bundle_label)), 'error');
+   }
+ 
+   $admin_path = _field_ui_bundle_admin_path($entity_type, $bundle);
+diff --git a/modules/file/file.css b/modules/file/file.css
+index aed1a9d..40451b8 100644
+--- a/modules/file/file.css
++++ b/modules/file/file.css
+@@ -19,10 +19,6 @@
+   padding: 1px 5px 2px 5px;
+ }
+ 
+-.form-managed-file div.ajax-progress div {
+-  display: inline;
+-}
+-
+ .form-managed-file div.ajax-progress-bar {
+   display: none;
+   margin-top: 4px;
+diff --git a/modules/file/file.field.inc b/modules/file/file.field.inc
+index 35696dd..7f5906e 100644
+--- a/modules/file/file.field.inc
++++ b/modules/file/file.field.inc
+@@ -463,6 +463,7 @@ function file_field_widget_form(&$form, &$form_state, $field, $instance, $langco
+     '#upload_validators' => file_field_widget_upload_validators($field, $instance),
+     '#value_callback' => 'file_field_widget_value',
+     '#process' => array_merge($element_info['#process'], array('file_field_widget_process')),
++    '#progress_indicator' => $instance['widget']['settings']['progress_indicator'],
+     // Allows this field to return an array instead of a single value.
+     '#extended' => TRUE,
+   );
+diff --git a/modules/file/file.module b/modules/file/file.module
+index 5d7b17a..f979a69 100644
+--- a/modules/file/file.module
++++ b/modules/file/file.module
+@@ -45,7 +45,6 @@ function file_menu() {
+   );
+   $items['file/progress'] = array(
+     'page callback' => 'file_ajax_progress',
+-    'delivery callback' => 'ajax_deliver',
+     'access arguments' => array('access content'),
+     'theme callback' => 'ajax_base_page_theme',
+     'type' => MENU_CALLBACK,
+@@ -384,7 +383,9 @@ function file_managed_file_process($element, &$form_state, $form) {
+     '#weight' => -5,
+   );
+ 
+-  $ajax_settings['progress']['type'] ? $ajax_settings['progress']['type'] == 'bar' : 'throbber';
++  // Force the progress indicator for the remove button to be either 'none' or
++  // 'throbber', even if the upload button is using something else.
++  $ajax_settings['progress']['type'] = ($element['#progress_indicator'] == 'none') ? 'none' : 'throbber';
+   $ajax_settings['progress']['message'] = NULL;
+   $ajax_settings['effect'] = 'none';
+   $element['remove_button'] = array(
+@@ -412,6 +413,9 @@ function file_managed_file_process($element, &$form_state, $form) {
+         '#type' => 'hidden',
+         '#value' => $upload_progress_key,
+         '#attributes' => array('class' => array('file-progress')),
++        // Uploadprogress extension requires this field to be at the top of the
++        // form.
++        '#weight' => -20,
+       );
+     }
+     elseif ($implementation == 'apc') {
+@@ -419,6 +423,9 @@ function file_managed_file_process($element, &$form_state, $form) {
+         '#type' => 'hidden',
+         '#value' => $upload_progress_key,
+         '#attributes' => array('class' => array('file-progress')),
++        // Uploadprogress extension requires this field to be at the top of the
++        // form.
++        '#weight' => -20,
+       );
+     }
+ 
+diff --git a/modules/forum/forum.module b/modules/forum/forum.module
+index 65c5489..f538216 100644
+--- a/modules/forum/forum.module
++++ b/modules/forum/forum.module
+@@ -553,27 +553,24 @@ function forum_field_storage_pre_update($entity_type, $entity, &$skip_fields) {
+       $first_call[$entity->nid] = FALSE;
+       db_delete('forum_index')->condition('nid', $entity->nid)->execute();
+     }
+-    // Only save data to the table if the node is published.
+-    if ($entity->status) {
+-      $query = db_insert('forum_index')->fields(array('nid', 'title', 'tid', 'sticky', 'created', 'comment_count', 'last_comment_timestamp'));
+-      foreach ($entity->taxonomy_forums as $language) {
+-        foreach ($language as $item) {
+-          $query->values(array(
+-            'nid' => $entity->nid,
+-            'title' => $entity->title,
+-            'tid' => $item['tid'],
+-            'sticky' => $entity->sticky,
+-            'created' => $entity->created,
+-            'comment_count' => 0,
+-            'last_comment_timestamp' => $entity->created,
+-          ));
+-        }
++    $query = db_insert('forum_index')->fields(array('nid', 'title', 'tid', 'sticky', 'created', 'comment_count', 'last_comment_timestamp'));
++    foreach ($entity->taxonomy_forums as $language) {
++      foreach ($language as $item) {
++        $query->values(array(
++          'nid' => $entity->nid,
++          'title' => $entity->title,
++          'tid' => $item['tid'],
++          'sticky' => $entity->sticky,
++          'created' => $entity->created,
++          'comment_count' => 0,
++          'last_comment_timestamp' => $entity->created,
++        ));
+       }
+-      $query->execute();
+-      // The logic for determining last_comment_count is fairly complex, so
+-      // call _forum_update_forum_index() too.
+-      _forum_update_forum_index($entity->nid);
+     }
++    $query->execute();
++    // The logic for determining last_comment_count is fairly complex, so
++    // call _forum_update_forum_index() too.
++    _forum_update_forum_index($entity->nid);
+   }
+ }
+ 
+diff --git a/modules/locale/locale.test b/modules/locale/locale.test
+index 5ab0d28..5eb1cd3 100644
+--- a/modules/locale/locale.test
++++ b/modules/locale/locale.test
+@@ -204,43 +204,65 @@ class LocaleJavascriptTranslationTest extends DrupalWebTestCase {
+ 
+     // Get all of the source strings that were found.
+     $source_strings = db_select('locales_source', 's')
+-      ->fields('s', array('source', 'lid'))
++      ->fields('s', array('source', 'context'))
+       ->condition('s.location', $filename)
+       ->execute()
+       ->fetchAllKeyed();
+ 
+     // List of all strings that should be in the file.
+     $test_strings = array(
+-      "Standard Call t",
+-      "Whitespace Call t",
++      "Standard Call t" => '',
++      "Whitespace Call t" => '',
+ 
+-      "Single Quote t",
+-      "Single Quote \\'Escaped\\' t",
+-      "Single Quote Concat strings t",
++      "Single Quote t" => '',
++      "Single Quote \\'Escaped\\' t" => '',
++      "Single Quote Concat strings t" => '',
+ 
+-      "Double Quote t",
+-      "Double Quote \\\"Escaped\\\" t",
+-      "Double Quote Concat strings t",
++      "Double Quote t" => '',
++      "Double Quote \\\"Escaped\\\" t" => '',
++      "Double Quote Concat strings t" => '',
+ 
+-      "Standard Call plural",
+-      "Standard Call @count plural",
+-      "Whitespace Call plural",
+-      "Whitespace Call @count plural",
++      "Context !key Args t" => "Context string",
+ 
+-      "Single Quote plural",
+-      "Single Quote @count plural",
+-      "Single Quote \\'Escaped\\' plural",
+-      "Single Quote \\'Escaped\\' @count plural",
++      "Context Unquoted t" => "Context string unquoted",
++      "Context Single Quoted t" => "Context string single quoted",
++      "Context Double Quoted t" => "Context string double quoted",
+ 
+-      "Double Quote plural",
+-      "Double Quote @count plural",
+-      "Double Quote \\\"Escaped\\\" plural",
+-      "Double Quote \\\"Escaped\\\" @count plural",
++      "Standard Call plural" => '',
++      "Standard Call @count plural" => '',
++      "Whitespace Call plural" => '',
++      "Whitespace Call @count plural" => '',
++
++      "Single Quote plural" => '',
++      "Single Quote @count plural" => '',
++      "Single Quote \\'Escaped\\' plural" => '',
++      "Single Quote \\'Escaped\\' @count plural" => '',
++
++      "Double Quote plural" => '',
++      "Double Quote @count plural" => '',
++      "Double Quote \\\"Escaped\\\" plural" => '',
++      "Double Quote \\\"Escaped\\\" @count plural" => '',
++
++      "Context !key Args plural" => "Context string",
++      "Context !key Args @count plural" => "Context string",
++
++      "Context Unquoted plural" => "Context string unquoted",
++      "Context Unquoted @count plural" => "Context string unquoted",
++      "Context Single Quoted plural" => "Context string single quoted",
++      "Context Single Quoted @count plural" => "Context string single quoted",
++      "Context Double Quoted plural" => "Context string double quoted",
++      "Context Double Quoted @count plural" => "Context string double quoted",
+     );
+ 
+     // Assert that all strings were found properly.
+-    foreach ($test_strings as $str) {
+-      $this->assertTrue(isset($source_strings[$str]), t("Found source string: %source", array('%source' => $str)));
++    foreach ($test_strings as $str => $context) {
++      $args = array('%source' => $str, '%context' => $context);
++
++      // Make sure that the string was found in the file.
++      $this->assertTrue(isset($source_strings[$str]), t("Found source string: %source", $args));
++
++      // Make sure that the proper context was matched.
++      $this->assertTrue(isset($source_strings[$str]) && $source_strings[$str] === $context, strlen($context) > 0 ? t("Context for %source is %context", $args) : t("Context for %source is blank", $args));
+     }
+ 
+     $this->assertEqual(count($source_strings), count($test_strings), t("Found correct number of source strings."));
+diff --git a/modules/locale/tests/locale_test.js b/modules/locale/tests/locale_test.js
+index 251d115..0693bca 100644
+--- a/modules/locale/tests/locale_test.js
++++ b/modules/locale/tests/locale_test.js
+@@ -16,6 +16,11 @@ Drupal.t("Double Quote t");
+ Drupal.t("Double Quote \"Escaped\" t");
+ Drupal.t("Double Quote " + "Concat " + "strings " + "t");
+ 
++Drupal.t("Context Unquoted t", {}, {context: "Context string unquoted"});
++Drupal.t("Context Single Quoted t", {}, {'context': "Context string single quoted"});
++Drupal.t("Context Double Quoted t", {}, {"context": "Context string double quoted"});
++
++Drupal.t("Context !key Args t", {'!key': 'value'}, {context: "Context string"});
+ 
+ Drupal.formatPlural(1, "Standard Call plural", "Standard Call @count plural");
+ Drupal
+@@ -24,7 +29,7 @@ formatPlural
+ (
+ 1,
+ "Whitespace Call plural",
+-"Whitespace Call @count plural",
++"Whitespace Call @count plural"
+ )
+ ;
+ 
+@@ -33,3 +38,9 @@ Drupal.formatPlural(1, 'Single Quote \'Escaped\' plural', 'Single Quote \'Escape
+ 
+ Drupal.formatPlural(1, "Double Quote plural", "Double Quote @count plural");
+ Drupal.formatPlural(1, "Double Quote \"Escaped\" plural", "Double Quote \"Escaped\" @count plural");
++
++Drupal.formatPlural(1, "Context Unquoted plural", "Context Unquoted @count plural", {}, {context: "Context string unquoted"});
++Drupal.formatPlural(1, "Context Single Quoted plural", "Context Single Quoted @count plural", {}, {'context': "Context string single quoted"});
++Drupal.formatPlural(1, "Context Double Quoted plural", "Context Double Quoted @count plural", {}, {"context": "Context string double quoted"});
++
++Drupal.formatPlural(1, "Context !key Args plural", "Context !key Args @count plural", {'!key': 'value'}, {context: "Context string"});
+diff --git a/modules/menu/menu.admin.inc b/modules/menu/menu.admin.inc
+index d9b98cc..5e8f08d 100644
+--- a/modules/menu/menu.admin.inc
++++ b/modules/menu/menu.admin.inc
+@@ -679,7 +679,7 @@ function menu_configure() {
+     '#empty_option' => t('No Secondary links'),
+     '#options' => $menu_options,
+     '#tree' => FALSE,
+-    '#description' => t('Select the source for the Secondary links. An advanced option allows you to use the same source for both Main links (currently %main) and Secondary links: if your source menu has two levels of hierarchy, the top level menu links will appear in the Main links, and the children of the active link will appear in the Secondary links.', array('%main' => $main ? $menu_options[$main] : 'none')),
++    '#description' => t('Select the source for the Secondary links. An advanced option allows you to use the same source for both Main links (currently %main) and Secondary links: if your source menu has two levels of hierarchy, the top level menu links will appear in the Main links, and the children of the active link will appear in the Secondary links.', array('%main' => $main ? $menu_options[$main] : t('none'))),
+   );
+ 
+   return system_settings_form($form);
+diff --git a/modules/node/node.api.php b/modules/node/node.api.php
+index 5c41e1f..7f8e228 100644
+--- a/modules/node/node.api.php
++++ b/modules/node/node.api.php
+@@ -571,7 +571,7 @@ function hook_node_load($nodes, $types) {
+  * Blindly returning FALSE will break other node access modules.
+  *
+  * @param $node
+- *   Either a node object or a (machine-readable) content type on which to
++ *   Either a node object or the machine name of the content type on which to
+  *   perform the access check.
+  * @param $op
+  *   The operation to be performed. Possible values:
+@@ -583,9 +583,9 @@ function hook_node_load($nodes, $types) {
+  *   The user object to perform the access check operation on.
+  *
+  * @return
+- *   NODE_ACCESS_ALLOW if the operation is to be allowed;
+- *   NODE_ACCESS_DENY if the operation is to be denied;
+- *   NODE_ACCESS_IGNORE to not affect this operation at all.
++ *   - NODE_ACCESS_ALLOW: if the operation is to be allowed.
++ *   - NODE_ACCESS_DENY: if the operation is to be denied.
++ *   - NODE_ACCESS_IGNORE: to not affect this operation at all.
+  *
+  * @ingroup node_access
+  */
+diff --git a/modules/node/node.test b/modules/node/node.test
+index 6c3a678..96b93cf 100644
+--- a/modules/node/node.test
++++ b/modules/node/node.test
+@@ -1088,7 +1088,15 @@ class NodeAccessBaseTableTestCase extends DrupalWebTestCase {
+     $this->assertTaxonomyPage(TRUE);
+   }
+ 
+-  protected function assertTaxonomyPage($super) {
++  /**
++   * Checks taxonomy/term listings to ensure only accessible nodes are listed.
++   *
++   * @param $is_admin
++   *   A boolean indicating whether the current user is an administrator. If
++   *   TRUE, all nodes should be listed. If FALSE, only public nodes and the
++   *   user's own private nodes should be listed.
++   */
++  protected function assertTaxonomyPage($is_admin) {
+     foreach (array($this->publicTid, $this->privateTid) as $tid_is_private => $tid) {
+       $this->drupalGet("taxonomy/term/$tid");
+       $this->nids_visible = array();
+@@ -1101,8 +1109,9 @@ class NodeAccessBaseTableTestCase extends DrupalWebTestCase {
+           // Private nodes should be visible on the private term page,
+           // public nodes should be visible on the public term page.
+           $should_be_visible = $tid_is_private == $is_private;
+-          // Non-superusers on the private page can only see their own nodes.
+-          if (!$super && $tid_is_private) {
++          // Non-administrators can only see their own nodes on the private
++          // term page.
++          if (!$is_admin && $tid_is_private) {
+             $should_be_visible = $should_be_visible && $uid == $this->webUser->uid;
+           }
+           $this->assertIdentical(isset($this->nids_visible[$nid]), $should_be_visible, strtr('A %private node by user %uid is %visible for user %current_uid on the %tid_is_private page.', array(
+diff --git a/modules/overlay/overlay-child-rtl.css b/modules/overlay/overlay-child-rtl.css
+index 8d90fab..7fd39f4 100644
+--- a/modules/overlay/overlay-child-rtl.css
++++ b/modules/overlay/overlay-child-rtl.css
+@@ -31,5 +31,5 @@ html {
+   right: auto;
+ }
+ #overlay-tabs li {
+-  margin: 0 -3px 0 O;
++  margin: 0 -3px 0 0;
+ }
+diff --git a/modules/overlay/overlay.module b/modules/overlay/overlay.module
+index 9af18e1..7609033 100644
+--- a/modules/overlay/overlay.module
++++ b/modules/overlay/overlay.module
+@@ -146,7 +146,7 @@ function overlay_init() {
+       // If this page shouldn't be rendered inside the overlay, redirect to the
+       // parent.
+       elseif (!path_is_admin($current_path)) {
+-        overlay_close_dialog($current_path);
++        overlay_close_dialog($current_path, array('query' => drupal_get_query_parameters(NULL, array('q', 'render'))));
+       }
+ 
+       // Indicate that we are viewing an overlay child page.
+diff --git a/modules/profile/profile.module b/modules/profile/profile.module
+index 8cac6d7..132e438 100644
+--- a/modules/profile/profile.module
++++ b/modules/profile/profile.module
+@@ -214,7 +214,7 @@ function profile_block_view($delta = '') {
+  * Implements hook_user_presave().
+  */
+ function profile_user_presave(&$edit, $account, $category) {
+-  if ($account->uid) {
++  if (!empty($account->uid)) {
+     profile_save_profile($edit, $account, $category);
+   }
+ }
+diff --git a/modules/profile/profile.test b/modules/profile/profile.test
+index 09123d8..87fca4a 100644
+--- a/modules/profile/profile.test
++++ b/modules/profile/profile.test
+@@ -481,6 +481,46 @@ class ProfileTestBrowsing extends ProfileTestCase {
+   }
+ }
+ 
++/**
++ * Test profile integration with user CRUD operations.
++ */
++class ProfileCrudTestCase extends ProfileTestCase {
++  public static function getInfo() {
++    return array(
++      'name' => 'Profile CRUD tests',
++      'description' => 'Test profile integration with user create, read, update, delete.',
++      'group' => 'Profile',
++    );
++  }
++
++  /**
++   * Test profile integration with user CRUD operations.
++   */
++  public function testUserCRUD() {
++    // @todo Add profile fields in addition to base user properties.
++    $edit = array(
++      'name' => 'Test user',
++      'mail' => 'test@example.com',
++    );
++
++    // Create.
++    // @todo Add assertions.
++    $account = user_save(NULL, $edit);
++
++    // Read.
++    // @todo Add assertions.
++    $account = user_load($account->uid);
++
++    // Update.
++    // @todo Add assertions.
++    $account = user_save($account, $edit);
++
++    // Delete.
++    // @todo Add assertions.
++    user_delete($account->uid);
++  }
++}
++
+   /**
+    * TODO:
+    * - Test field visibility
+diff --git a/modules/search/search.test b/modules/search/search.test
+index a6ed0df..b1edad6 100644
+--- a/modules/search/search.test
++++ b/modules/search/search.test
+@@ -1975,7 +1975,7 @@ class SearchNodeAccessTest extends DrupalWebTestCase {
+    * Tests that search returns results with punctuation in the search phrase.
+    */
+   function testPhraseSearchPunctuation() {
+-    $node = $this->drupalCreateNode(array('body' => array(LANGUAGE_NONE => array(array('value' => "The bunny's ears were furry.")))));
++    $node = $this->drupalCreateNode(array('body' => array(LANGUAGE_NONE => array(array('value' => "The bunny's ears were fuzzy.")))));
+ 
+     // Update the search index.
+     module_invoke_all('update_index');
+diff --git a/modules/simpletest/drupal_web_test_case.php b/modules/simpletest/drupal_web_test_case.php
+index 2b23a3b..04f66ec 100644
+--- a/modules/simpletest/drupal_web_test_case.php
++++ b/modules/simpletest/drupal_web_test_case.php
+@@ -1968,6 +1968,16 @@ class DrupalWebTestCase extends DrupalTestCase {
+       $id = (string) $element['id'];
+       $extra_post .= '&' . urlencode('ajax_html_ids[]') . '=' . urlencode($id);
+     }
++    if (isset($drupal_settings['ajaxPageState'])) {
++      $extra_post .= '&' . urlencode('ajax_page_state[theme]') . '=' . urlencode($drupal_settings['ajaxPageState']['theme']);
++      $extra_post .= '&' . urlencode('ajax_page_state[theme_token]') . '=' . urlencode($drupal_settings['ajaxPageState']['theme_token']);
++      foreach ($drupal_settings['ajaxPageState']['css'] as $key => $value) {
++        $extra_post .= '&' . urlencode("ajax_page_state[css][$key]") . '=1';
++      }
++      foreach ($drupal_settings['ajaxPageState']['js'] as $key => $value) {
++        $extra_post .= '&' . urlencode("ajax_page_state[js][$key]") . '=1';
++      }
++    }
+ 
+     // Unless a particular path is specified, use the one specified by the
+     // Ajax settings, or else 'system/ajax'.
+@@ -1992,7 +2002,7 @@ class DrupalWebTestCase extends DrupalTestCase {
+       foreach ($return as $command) {
+         switch ($command['command']) {
+           case 'settings':
+-            $drupal_settings = array_merge_recursive($drupal_settings, $command['settings']);
++            $drupal_settings = drupal_array_merge_deep($drupal_settings, $command['settings']);
+             break;
+ 
+           case 'insert':
+diff --git a/modules/simpletest/tests/ajax.test b/modules/simpletest/tests/ajax.test
+index 9579792..9a76b96 100644
+--- a/modules/simpletest/tests/ajax.test
++++ b/modules/simpletest/tests/ajax.test
+@@ -116,6 +116,64 @@ class AJAXFrameworkTestCase extends AJAXTestCase {
+     );
+      $this->assertCommand($commands, $expected, t('Custom error message is output.'));
+   }
++
++  /**
++   * Test that new JavaScript and CSS files added during an AJAX request are returned.
++   */
++  function testLazyLoad() {
++    $expected = array(
++      'setting_name' => 'ajax_forms_test_lazy_load_form_submit',
++      'setting_value' => 'executed',
++      'css' => drupal_get_path('module', 'system') . '/system.admin.css',
++      'js' => drupal_get_path('module', 'system') . '/system.js',
++    );
++
++    // Get the base page.
++    $this->drupalGet('ajax_forms_test_lazy_load_form');
++    $original_settings = $this->drupalGetSettings();
++    $original_css = $original_settings['ajaxPageState']['css'];
++    $original_js = $original_settings['ajaxPageState']['js'];
++
++    // Verify that the base page doesn't have the settings and files that are to
++    // be lazy loaded as part of the next request.
++    $this->assertTrue(!isset($original_settings[$expected['setting_name']]), t('Page originally lacks the %setting, as expected.', array('%setting' => $expected['setting_name'])));
++    $this->assertTrue(!isset($original_settings[$expected['css']]), t('Page originally lacks the %css file, as expected.', array('%css' => $expected['css'])));
++    $this->assertTrue(!isset($original_settings[$expected['js']]), t('Page originally lacks the %js file, as expected.', array('%js' => $expected['js'])));
++
++    // Submit the AJAX request.
++    $commands = $this->drupalPostAJAX(NULL, array(), array('op' => t('Submit')));
++    $new_settings = $this->drupalGetSettings();
++    $new_css = $new_settings['ajaxPageState']['css'];
++    $new_js = $new_settings['ajaxPageState']['js'];
++
++    // Verify the expected setting was added.
++    $this->assertIdentical($new_settings[$expected['setting_name']], $expected['setting_value'], t('Page now has the %setting.', array('%setting' => $expected['setting_name'])));
++
++    // Verify the expected CSS file was added, both to Drupal.settings, and as
++    // an AJAX command for inclusion into the HTML.
++    // @todo A drupal_css_defaults() function in Drupal 8 would be nice.
++    $expected_css_html = drupal_get_css(array($expected['css'] => array(
++      'type' => 'file',
++      'group' => CSS_DEFAULT,
++      'weight' => 0,
++      'every_page' => FALSE,
++      'media' => 'all',
++      'preprocess' => TRUE,
++      'data' => $expected['css'],
++      'browsers' => array('IE' => TRUE, '!IE' => TRUE),
++    )), TRUE);
++    $this->assertEqual($new_css, $original_css + array($expected['css'] => 1), t('Page state now has the %css file.', array('%css' => $expected['css'])));
++    $this->assertCommand($commands, array('data' => $expected_css_html), t('Page now has the %css file.', array('%css' => $expected['css'])));
++
++    // Verify the expected JS file was added, both to Drupal.settings, and as
++    // an AJAX command for inclusion into the HTML. By testing for an exact HTML
++    // string containing the SCRIPT tag, we also ensure that unexpected
++    // JavaScript code, such as a jQuery.extend() that would potentially clobber
++    // rather than properly merge settings, didn't accidentally get added.
++    $expected_js_html = drupal_get_js('header', array($expected['js'] => drupal_js_defaults($expected['js'])), TRUE);
++    $this->assertEqual($new_js, $original_js + array($expected['js'] => 1), t('Page state now has the %js file.', array('%js' => $expected['js'])));
++    $this->assertCommand($commands, array('data' => $expected_js_html), t('Page now has the %js file.', array('%js' => $expected['js'])));
++  }
+ }
+ 
+ /**
+diff --git a/modules/simpletest/tests/ajax_forms_test.module b/modules/simpletest/tests/ajax_forms_test.module
+index d38cbbb..075b005 100644
+--- a/modules/simpletest/tests/ajax_forms_test.module
++++ b/modules/simpletest/tests/ajax_forms_test.module
+@@ -29,6 +29,12 @@ function ajax_forms_test_menu() {
+     'page arguments' => array('ajax_forms_test_validation_form'),
+     'access callback' => TRUE,
+   );
++  $items['ajax_forms_test_lazy_load_form'] = array(
++    'title' => 'AJAX forms lazy load test',
++    'page callback' => 'drupal_get_form',
++    'page arguments' => array('ajax_forms_test_lazy_load_form'),
++    'access callback' => TRUE,
++  );
+   return $items;
+ }
+ 
+@@ -457,3 +463,38 @@ function ajax_forms_test_validation_form_callback($form, $form_state) {
+   drupal_set_message(t("Callback: drivertext=%drivertext, spare_required_field=%spare_required_field", array('%drivertext' => $form_state['values']['drivertext'], '%spare_required_field' => $form_state['values']['spare_required_field'])));
+   return '<div id="message_area">ajax_forms_test_validation_form_callback at ' . date('c') . '</div>';
+ }
++
++/**
++ * Form builder: Builds a form that triggers a simple AJAX callback.
++ */
++function ajax_forms_test_lazy_load_form($form, &$form_state) {
++  $form['submit'] = array(
++    '#type' => 'submit',
++    '#value' => t('Submit'),
++    '#ajax' => array(
++      'callback' => 'ajax_forms_test_lazy_load_form_ajax',
++    ),
++  );
++  return $form;
++}
++
++/**
++ * Form submit handler: Adds JavaScript and CSS that wasn't on the original form.
++ */
++function ajax_forms_test_lazy_load_form_submit($form, &$form_state) {
++  drupal_add_js(array('ajax_forms_test_lazy_load_form_submit' => 'executed'), 'setting');
++  drupal_add_css(drupal_get_path('module', 'system') . '/system.admin.css');
++  drupal_add_js(drupal_get_path('module', 'system') . '/system.js');
++  $form_state['rebuild'] = TRUE;
++}
++
++/**
++ * AJAX callback for the ajax_forms_test_lazy_load_form() form.
++ *
++ * This function returns nothing, because all we're interested in testing is
++ * ajax_render() adding commands for JavaScript and CSS added during the page
++ * request, such as the ones added in ajax_forms_test_lazy_load_form_submit().
++ */
++function ajax_forms_test_lazy_load_form_ajax($form, &$form_state) {
++  return NULL;
++}
+diff --git a/modules/simpletest/tests/bootstrap.test b/modules/simpletest/tests/bootstrap.test
+index cb4fe8e..014fc94 100644
+--- a/modules/simpletest/tests/bootstrap.test
++++ b/modules/simpletest/tests/bootstrap.test
+@@ -350,8 +350,18 @@ class BootstrapGetFilenameTestCase extends DrupalUnitTestCase {
+     // Retrieving the location of a theme engine.
+     $this->assertIdentical(drupal_get_filename('theme_engine', 'phptemplate'), 'themes/engines/phptemplate/phptemplate.engine', t('Retrieve theme engine location.'));
+ 
+-    // Retrieving a file that is definitely not stored in the database.
++    // Retrieving the location of a profile. Profiles are a special case with
++    // a fixed location and naming.
+     $this->assertIdentical(drupal_get_filename('profile', 'standard'), 'profiles/standard/standard.profile', t('Retrieve install profile location.'));
++
++    // When a file is not found in the database cache, drupal_get_filename()
++    // searches several locations on the filesystem, including the DRUPAL_ROOT
++    // directory. We use the '.script' extension below because this is a
++    // non-existent filetype that will definitely not exist in the database.
++    // Since there is already a scripts directory, drupal_get_filename() will
++    // automatically check there for 'script' files, just as it does for (e.g.)
++    // 'module' files in modules.
++    $this->assertIdentical(drupal_get_filename('script', 'test'), 'scripts/test.script', t('Retrieve test script location.'));
+   }
+ }
+ 
+diff --git a/modules/simpletest/tests/common.test b/modules/simpletest/tests/common.test
+index c266dc3..a643ff9 100644
+--- a/modules/simpletest/tests/common.test
++++ b/modules/simpletest/tests/common.test
+@@ -56,6 +56,14 @@ class DrupalAlterTestCase extends DrupalWebTestCase {
+     $this->assertEqual($array_copy, $array_expected, t('First argument to drupal_alter() was altered.'));
+     $this->assertEqual($entity_copy, $entity_expected, t('Second argument to drupal_alter() was altered.'));
+     $this->assertEqual($array2_copy, $array2_expected, t('Third argument to drupal_alter() was altered.'));
++
++    // Verify alteration order when passing an array of types to drupal_alter().
++    // common_test_module_implements_alter() places 'block' implementation after
++    // other modules.
++    $array_copy = $array;
++    $array_expected = array('foo' => 'Drupal block theme');
++    drupal_alter(array('drupal_alter', 'drupal_alter_foo'), $array_copy);
++    $this->assertEqual($array_copy, $array_expected, t('hook_TYPE_alter() implementations ran in correct order.'));
+   }
+ }
+ 
+diff --git a/modules/simpletest/tests/common_test.module b/modules/simpletest/tests/common_test.module
+index c400eae..e75b452 100644
+--- a/modules/simpletest/tests/common_test.module
++++ b/modules/simpletest/tests/common_test.module
+@@ -166,6 +166,34 @@ function bartik_drupal_alter_alter(&$data, &$arg2 = NULL, &$arg3 = NULL) {
+ }
+ 
+ /**
++ * Implements hook_TYPE_alter() on behalf of block module.
++ *
++ * This is for verifying that drupal_alter(array(TYPE1, TYPE2), ...) allows
++ * hook_module_implements_alter() to affect the order in which module
++ * implementations are executed.
++ */
++function block_drupal_alter_foo_alter(&$data, &$arg2 = NULL, &$arg3 = NULL) {
++  $data['foo'] .= ' block';
++}
++
++/**
++ * Implements hook_module_implements_alter().
++ *
++ * @see block_drupal_alter_foo_alter()
++ */
++function common_test_module_implements_alter(&$implementations, $hook) {
++  // For drupal_alter(array('drupal_alter', 'drupal_alter_foo'), ...), make the
++  // block module implementations run after all the other modules. Note that
++  // when drupal_alter() is called with an array of types, the first type is
++  // considered primary and controls the module order.
++  if ($hook == 'drupal_alter_alter' && isset($implementations['block'])) {
++    $group = $implementations['block'];
++    unset($implementations['block']);
++    $implementations['block'] = $group;
++  }
++}
++
++/**
+  * Implements hook_theme().
+  */
+ function common_test_theme() {
+diff --git a/modules/simpletest/tests/path.test b/modules/simpletest/tests/path.test
+index 4998ffa..8b3e6dc 100644
+--- a/modules/simpletest/tests/path.test
++++ b/modules/simpletest/tests/path.test
+@@ -201,6 +201,14 @@ class UrlAlterFunctionalTest extends DrupalWebTestCase {
+   }
+ 
+   /**
++   * Tests that $_GET['q'] is initialized when the request path is empty.
++   */
++  function testGetQInitialized() {
++    $this->drupalGet('');
++    $this->assertText("\$_GET['q'] is non-empty with an empty request path.", "\$_GET['q'] is initialized with an empty request path.");
++  }
++
++  /**
+    * Assert that an outbound path is altered to an expected value.
+    *
+    * @param $original
+diff --git a/modules/simpletest/tests/system_incompatible_core_version_dependencies_test.info b/modules/simpletest/tests/system_incompatible_core_version_dependencies_test.info
+new file mode 100644
+index 0000000..002c0d2
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_core_version_dependencies_test.info
+@@ -0,0 +1,7 @@
++name = "System incompatible core version dependencies test"
++description = "Support module for testing system dependencies."
++package = Testing
++version = VERSION
++core = 7.x
++hidden = TRUE
++dependencies[] = system_incompatible_core_version_test
+diff --git a/modules/simpletest/tests/system_incompatible_core_version_dependencies_test.module b/modules/simpletest/tests/system_incompatible_core_version_dependencies_test.module
+new file mode 100644
+index 0000000..b3d9bbc
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_core_version_dependencies_test.module
+@@ -0,0 +1 @@
++<?php
+diff --git a/modules/simpletest/tests/system_incompatible_core_version_test.info b/modules/simpletest/tests/system_incompatible_core_version_test.info
+new file mode 100644
+index 0000000..ced53e9
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_core_version_test.info
+@@ -0,0 +1,6 @@
++name = "System incompatible core version test"
++description = "Support module for testing system dependencies."
++package = Testing
++version = VERSION
++core = 5.x
++hidden = TRUE
+diff --git a/modules/simpletest/tests/system_incompatible_core_version_test.module b/modules/simpletest/tests/system_incompatible_core_version_test.module
+new file mode 100644
+index 0000000..b3d9bbc
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_core_version_test.module
+@@ -0,0 +1 @@
++<?php
+diff --git a/modules/simpletest/tests/system_incompatible_module_version_dependencies_test.info b/modules/simpletest/tests/system_incompatible_module_version_dependencies_test.info
+new file mode 100644
+index 0000000..48db9ea
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_module_version_dependencies_test.info
+@@ -0,0 +1,8 @@
++name = "System incompatible module version dependencies test"
++description = "Support module for testing system dependencies."
++package = Testing
++version = VERSION
++core = 7.x
++hidden = TRUE
++; system_incompatible_module_version_test declares version 1.0
++dependencies[] = system_incompatible_module_version_test (>2.0)
+diff --git a/modules/simpletest/tests/system_incompatible_module_version_dependencies_test.module b/modules/simpletest/tests/system_incompatible_module_version_dependencies_test.module
+new file mode 100644
+index 0000000..b3d9bbc
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_module_version_dependencies_test.module
+@@ -0,0 +1 @@
++<?php
+diff --git a/modules/simpletest/tests/system_incompatible_module_version_test.info b/modules/simpletest/tests/system_incompatible_module_version_test.info
+new file mode 100644
+index 0000000..9dfc686
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_module_version_test.info
+@@ -0,0 +1,6 @@
++name = "System incompatible module version test"
++description = "Support module for testing system dependencies."
++package = Testing
++version = 1.0
++core = 7.x
++hidden = TRUE
+diff --git a/modules/simpletest/tests/system_incompatible_module_version_test.module b/modules/simpletest/tests/system_incompatible_module_version_test.module
+new file mode 100644
+index 0000000..b3d9bbc
+--- /dev/null
++++ b/modules/simpletest/tests/system_incompatible_module_version_test.module
+@@ -0,0 +1 @@
++<?php
+diff --git a/modules/simpletest/tests/system_test.module b/modules/simpletest/tests/system_test.module
+index 9516c91..8cb0e83 100644
+--- a/modules/simpletest/tests/system_test.module
++++ b/modules/simpletest/tests/system_test.module
+@@ -264,6 +264,14 @@ function system_test_system_info_alter(&$info, $file, $type) {
+   if ($file->name == 'system_dependencies_test') {
+     $info['hidden'] = FALSE;
+   }
++  if (in_array($file->name, array(
++    'system_incompatible_module_version_dependencies_test',
++    'system_incompatible_core_version_dependencies_test',
++    'system_incompatible_module_version_test',
++    'system_incompatible_core_version_test',
++  ))) {
++    $info['hidden'] = FALSE;
++  }
+   if ($file->name == 'requirements1_test' || $file->name == 'requirements2_test') {
+     $info['hidden'] = FALSE;
+   }
+diff --git a/modules/simpletest/tests/theme.test b/modules/simpletest/tests/theme.test
+index 53557e3..ea0f257 100644
+--- a/modules/simpletest/tests/theme.test
++++ b/modules/simpletest/tests/theme.test
+@@ -194,7 +194,7 @@ class ThemeItemListUnitTest extends DrupalWebTestCase {
+ /**
+  * Unit tests for theme_links().
+  */
+-class ThemeLinksUnitTest extends DrupalUnitTestCase {
++class ThemeLinksTest extends DrupalWebTestCase {
+   public static function getInfo() {
+     return array(
+       'name' => 'Links',
+diff --git a/modules/simpletest/tests/update_script_test.info b/modules/simpletest/tests/update_script_test.info
+new file mode 100644
+index 0000000..be1e3d8
+--- /dev/null
++++ b/modules/simpletest/tests/update_script_test.info
+@@ -0,0 +1,6 @@
++name = "Update script test"
++description = "Support module for update script testing."
++package = Testing
++version = VERSION
++core = 7.x
++hidden = TRUE
+diff --git a/modules/simpletest/tests/update_script_test.install b/modules/simpletest/tests/update_script_test.install
+new file mode 100644
+index 0000000..6955ef1
+--- /dev/null
++++ b/modules/simpletest/tests/update_script_test.install
+@@ -0,0 +1,45 @@
++<?php
++
++/**
++ * @file
++ * Install, update and uninstall functions for the update_script_test module.
++ */
++
++/**
++ * Implements hook_requirements().
++ */
++function update_script_test_requirements($phase) {
++  $requirements = array();
++
++  if ($phase == 'update') {
++    // Set a requirements warning or error when the test requests it.
++    $requirement_type = variable_get('update_script_test_requirement_type');
++    switch ($requirement_type) {
++      case REQUIREMENT_WARNING:
++        $requirements['update_script_test'] = array(
++          'title' => 'Update script test',
++          'value' => 'Warning',
++          'description' => 'This is a requirements warning provided by the update_script_test module.',
++          'severity' => REQUIREMENT_WARNING,
++        );
++        break;
++      case REQUIREMENT_ERROR:
++        $requirements['update_script_test'] = array(
++          'title' => 'Update script test',
++          'value' => 'Error',
++          'description' => 'This is a requirements error provided by the update_script_test module.',
++          'severity' => REQUIREMENT_ERROR,
++        );
++        break;
++    }
++  }
++
++  return $requirements;
++}
++
++/**
++ * Dummy update function to run during the tests.
++ */
++function update_script_test_update_7000() {
++  return t('The update_script_test_update_7000() update was executed successfully.');
++}
+diff --git a/modules/simpletest/tests/update_script_test.module b/modules/simpletest/tests/update_script_test.module
+new file mode 100644
+index 0000000..beb5a71
+--- /dev/null
++++ b/modules/simpletest/tests/update_script_test.module
+@@ -0,0 +1,18 @@
++<?php
++
++/**
++ * @file
++ * This file provides testing functionality for update.php.
++ */
++
++/**
++ * Implements hook_flush_caches().
++ *
++ * This sets a message to confirm that all caches are cleared whenever
++ * update.php completes.
++ *
++ * @see UpdateScriptFunctionalTest::testRequirements()
++ */
++function update_script_test_flush_caches() {
++  drupal_set_message(t('hook_flush_caches() invoked for update_script_test.module.'));
++}
+diff --git a/modules/simpletest/tests/upgrade/drupal-7.bare.minimal.database.php.gz b/modules/simpletest/tests/upgrade/drupal-7.bare.minimal.database.php.gz
+new file mode 100644
+index 0000000..41be271
+Binary files /dev/null and b/modules/simpletest/tests/upgrade/drupal-7.bare.minimal.database.php.gz differ
+diff --git a/modules/simpletest/tests/upgrade/drupal-7.bare.standard_all.database.php.gz b/modules/simpletest/tests/upgrade/drupal-7.bare.standard_all.database.php.gz
+new file mode 100644
+index 0000000..c47ae87
+Binary files /dev/null and b/modules/simpletest/tests/upgrade/drupal-7.bare.standard_all.database.php.gz differ
+diff --git a/modules/simpletest/tests/upgrade/drupal-7.filled.minimal.database.php.gz b/modules/simpletest/tests/upgrade/drupal-7.filled.minimal.database.php.gz
+new file mode 100644
+index 0000000..de2dceb
+Binary files /dev/null and b/modules/simpletest/tests/upgrade/drupal-7.filled.minimal.database.php.gz differ
+diff --git a/modules/simpletest/tests/upgrade/drupal-7.filled.standard_all.database.php.gz b/modules/simpletest/tests/upgrade/drupal-7.filled.standard_all.database.php.gz
+new file mode 100644
+index 0000000..5cc5690
+Binary files /dev/null and b/modules/simpletest/tests/upgrade/drupal-7.filled.standard_all.database.php.gz differ
+diff --git a/modules/simpletest/tests/upgrade/upgrade.test b/modules/simpletest/tests/upgrade/upgrade.test
+index 7f934fe..01e1806 100644
+--- a/modules/simpletest/tests/upgrade/upgrade.test
++++ b/modules/simpletest/tests/upgrade/upgrade.test
+@@ -28,9 +28,60 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+   var $loadedModules = array();
+ 
+   /**
++   * Flag to indicate whether zlib is installed or not.
++   */
++  var $zlibInstalled = TRUE;
++
++  /**
++   * Flag to indicate whether there are pending updates or not.
++   */
++  var $pendingUpdates = TRUE;
++
++  /**
++   * Constructs an UpgradePathTestCase object.
++   *
++   * @param $test_id
++   *   (optional) The ID of the test. Tests with the same id are reported
++   *   together.
++   */
++  function __construct($test_id = NULL) {
++    parent::__construct($test_id);
++    $this->zlibInstalled = function_exists('gzopen');
++  }
++
++  /**
++   * Prepares the appropriate session for the release of Drupal being upgraded.
++   */
++  protected function prepareD7Session() {
++    // Generate and set a D6-compatible session cookie.
++    $this->curlInitialize();
++    $sid = drupal_hash_base64(uniqid(mt_rand(), TRUE) . drupal_random_bytes(55));
++    $session_name = update_get_d6_session_name();
++    curl_setopt($this->curlHandle, CURLOPT_COOKIE, rawurlencode($session_name) . '=' . rawurlencode($sid));
++
++    // Force our way into the session of the child site.
++    drupal_save_session(TRUE);
++    // A session cannot be written without the ssid column which is missing on
++    // Drupal 6 sites.
++    db_add_field('sessions', 'ssid', array('description' => "Secure session ID. The value is generated by Drupal's session handlers.", 'type' => 'varchar', 'length' => 128, 'not null' => TRUE, 'default' => ''));
++    _drupal_session_write($sid, '');
++    // Remove the temporarily added ssid column.
++    db_drop_field('sessions', 'ssid');
++    drupal_save_session(FALSE);
++  }
++
++  /**
+    * Override of DrupalWebTestCase::setUp() specialized for upgrade testing.
+    */
+   protected function setUp() {
++    // We are going to set a missing zlib requirement property for usage
++    // during the performUpgrade() and tearDown() methods. Also set that the
++    // tests failed.
++    if (!$this->zlibInstalled) {
++      parent::setUp();
++      return;
++    }
++
+     global $user, $language, $conf;
+ 
+     // Load the Update API.
+@@ -92,7 +143,11 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+     $conf = array();
+ 
+     // Load the database from the portable PHP dump.
++    // The files may be gzipped.
+     foreach ($this->databaseDumpFiles as $file) {
++      if (substr($file, -3) == '.gz') {
++        $file = "compress.zlib://$file";
++      }
+       require $file;
+     }
+ 
+@@ -109,20 +164,7 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+     $user = db_query('SELECT * FROM {users} WHERE uid = :uid', array(':uid' => 1))->fetchObject();
+ 
+     // Generate and set a D6-compatible session cookie.
+-    $this->curlInitialize();
+-    $sid = drupal_hash_base64(uniqid(mt_rand(), TRUE) . drupal_random_bytes(55));
+-    $session_name = update_get_d6_session_name();
+-    curl_setopt($this->curlHandle, CURLOPT_COOKIE, rawurlencode($session_name) . '=' . rawurlencode($sid));
+-
+-    // Force our way into the session of the child site.
+-    drupal_save_session(TRUE);
+-    // A session cannot be written without the ssid column which is missing on
+-    // Drupal 6 sites.
+-    db_add_field('sessions', 'ssid', array('description' => "Secure session ID. The value is generated by Drupal's session handlers.", 'type' => 'varchar', 'length' => 128, 'not null' => TRUE, 'default' => ''));
+-    _drupal_session_write($sid, '');
+-    // Remove the temporarily added ssid column.
+-    db_drop_field('sessions', 'ssid');
+-    drupal_save_session(FALSE);
++    $this->prepareD7Session();
+ 
+     // Restore necessary variables.
+     $this->variable_set('clean_url', $clean_url_original);
+@@ -137,6 +179,11 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+   protected function tearDown() {
+     global $user, $language;
+ 
++    if (!$this->zlibInstalled) {
++      parent::tearDown();
++      return;
++    }
++
+     // In case a fatal error occurred that was not in the test process read the
+     // log to pick up any fatal errors.
+     simpletest_log_read($this->testId, $this->databasePrefix, get_class($this), TRUE);
+@@ -231,6 +278,11 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+    *   TRUE if the upgrade succeeded, FALSE otherwise.
+    */
+   protected function performUpgrade($register_errors = TRUE) {
++    if (!$this->zlibInstalled) {
++      $this->fail(t('Missing zlib requirement for upgrade tests.'));
++      return FALSE;
++    }
++
+     $update_url = $GLOBALS['base_url'] . '/update.php';
+ 
+     // Load the first update screen.
+@@ -245,6 +297,14 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+       return FALSE;
+     }
+ 
++    // The test should pass if there are no pending updates.
++    $content = $this->drupalGetContent();
++    if (strpos($content, t('No pending updates.')) !== FALSE) {
++      $this->pass(t('No pending updates and therefore no upgrade process to test.'));
++      $this->pendingUpdates = FALSE;
++      return TRUE;
++    }
++
+     // Go!
+     $this->drupalPost(NULL, array(), t('Apply pending updates'));
+     if (!$this->assertResponse(200)) {
+@@ -319,6 +379,26 @@ abstract class UpgradePathTestCase extends DrupalWebTestCase {
+ }
+ 
+ /**
++ * Performs end-to-end point test of the release update path.
++ */
++abstract class UpdatePathTestCase extends UpgradePathTestCase {
++  /**
++   * Overrides UpgradePathTestCase::prepareD7Session().
++   */
++  protected function prepareD7Session() {
++    // Generate and set a D7-compatible session cookie.
++    $this->curlInitialize();
++    $sid = drupal_hash_base64(uniqid(mt_rand(), TRUE) . drupal_random_bytes(55));
++    curl_setopt($this->curlHandle, CURLOPT_COOKIE, rawurlencode(session_name()) . '=' . rawurlencode($sid));
++
++    // Force our way into the session of the child site.
++    drupal_save_session(TRUE);
++    _drupal_session_write($sid, '');
++    drupal_save_session(FALSE);
++  }
++}
++
++/**
+  * Perform basic upgrade tests.
+  *
+  * Load a bare installation of Drupal 6 and run the upgrade process on it.
+@@ -351,7 +431,7 @@ class BasicUpgradePath extends UpgradePathTestCase {
+     // Destroy a table that the upgrade process needs.
+     db_drop_table('access');
+     // Assert that the upgrade fails.
+-    $this->assertFalse($this->performUpgrade(FALSE), t('A failed upgrade should return messages.'));
++    $this->assertFalse($this->performUpgrade(FALSE) && $this->pendingUpdates, t('A failed upgrade should return messages.'));
+   }
+ 
+   /**
+@@ -408,3 +488,309 @@ class BasicUpgradePath extends UpgradePathTestCase {
+     $this->assertFalse($update_d6, t('The D6 upgrade flag variable has been correctly disabled.'));
+   }
+ }
++
++/**
++ * Performs point release update tests on a bare database.
++ *
++ * Loads an installation of Drupal 7.0 and runs the update process on it.
++ *
++ * The install contains the standard profile (plus all optional) modules
++ * without any content so that an update from any of the modules under this
++ * profile installation can be wholly tested.
++ */
++class BasicStandardUpdatePath extends UpdatePathTestCase {
++  public static function getInfo() {
++    return array(
++      'name'  => 'Basic standard + all profile update path',
++      'description'  => 'Basic update path tests for a standard profile install with all enabled modules.',
++      'group' => 'Upgrade path',
++    );
++  }
++
++  public function setUp() {
++    // Path to the database dump files.
++    $this->databaseDumpFiles = array(
++      drupal_get_path('module', 'simpletest') . '/tests/upgrade/drupal-7.bare.standard_all.database.php.gz',
++    );
++    parent::setUp();
++  }
++
++  /**
++   * Tests a successful point release update.
++   */
++  public function testBasicStandardUpdate() {
++    $this->assertTrue($this->performUpgrade(), t('The upgrade was completed successfully.'));
++
++    // Hit the frontpage.
++    $this->drupalGet('');
++    $this->assertResponse(200);
++
++    // Verify that we are still logged in.
++    $this->drupalGet('user');
++    $this->clickLink(t('Edit'));
++    $this->assertEqual($this->getUrl(), url('user/1/edit', array('absolute' => TRUE)), t('We are still logged in as admin at the end of the upgrade.'));
++
++    // Logout and verify that we can login back in with our initial password.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // The previous login should've triggered a password rehash, so login one
++    // more time to make sure the new hash is readable.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // Test that the site name is correctly displayed.
++    $this->assertText('drupal', t('The site name is correctly displayed.'));
++
++    // Verify that the main admin sections are available.
++    $this->drupalGet('admin');
++    $this->assertText(t('Content'));
++    $this->assertText(t('Appearance'));
++    $this->assertText(t('People'));
++    $this->assertText(t('Configuration'));
++    $this->assertText(t('Reports'));
++    $this->assertText(t('Structure'));
++    $this->assertText(t('Modules'));
++
++    // Confirm that no {menu_links} entry exists for user/autocomplete.
++    $result = db_query('SELECT COUNT(*) FROM {menu_links} WHERE link_path = :user_autocomplete', array(':user_autocomplete' => 'user/autocomplete'))->fetchField();
++    $this->assertFalse($result, t('No {menu_links} entry exists for user/autocomplete'));
++  }
++}
++
++/**
++ * Performs point release update tests on a bare database.
++ *
++ * Loads an installation of Drupal 7.0 and runs the update process on it.
++ *
++ * The install contains the minimal profile modules (without any generated
++ * content) so that an update from of a site under this profile may be tested.
++ */
++class BasicMinimalUpdatePath extends UpdatePathTestCase {
++  public static function getInfo() {
++    return array(
++      'name'  => 'Basic minimal profile update path',
++      'description'  => 'Basic update path tests for a minimal profile install.',
++      'group' => 'Upgrade path',
++    );
++  }
++
++  public function setUp() {
++    // Path to the database dump files.
++    $this->databaseDumpFiles = array(
++      drupal_get_path('module', 'simpletest') . '/tests/upgrade/drupal-7.bare.minimal.database.php.gz',
++    );
++    parent::setUp();
++  }
++
++  /**
++   * Tests a successful point release update.
++   */
++  public function testBasicMinimalUpdate() {
++    $this->assertTrue($this->performUpgrade(), t('The upgrade was completed successfully.'));
++
++    // Hit the frontpage.
++    $this->drupalGet('');
++    $this->assertResponse(200);
++
++    // Verify that we are still logged in.
++    $this->drupalGet('user');
++    $this->clickLink(t('Edit'));
++    $this->assertEqual($this->getUrl(), url('user/1/edit', array('absolute' => TRUE)), t('We are still logged in as admin at the end of the upgrade.'));
++
++    // Logout and verify that we can login back in with our initial password.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // The previous login should've triggered a password rehash, so login one
++    // more time to make sure the new hash is readable.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // Test that the site name is correctly displayed.
++    $this->assertText('drupal', t('The site name is correctly displayed.'));
++
++    // Verify that the main admin sections are available.
++    $this->drupalGet('admin');
++    $this->assertText(t('Content'));
++    $this->assertText(t('Appearance'));
++    $this->assertText(t('People'));
++    $this->assertText(t('Configuration'));
++    $this->assertText(t('Reports'));
++    $this->assertText(t('Structure'));
++    $this->assertText(t('Modules'));
++
++    // Confirm that no {menu_links} entry exists for user/autocomplete.
++    $result = db_query('SELECT COUNT(*) FROM {menu_links} WHERE link_path = :user_autocomplete', array(':user_autocomplete' => 'user/autocomplete'))->fetchField();
++    $this->assertFalse($result, t('No {menu_links} entry exists for user/autocomplete'));
++  }
++}
++
++/**
++ * Performs point release update tests on a 'filled' database.
++ *
++ * Loads an installation of Drupal 7.0 and runs the update process on it.
++ *
++ * The install contains the standard profile (plus all optional) modules
++ * with generated content so that an update from any of the modules under this
++ * profile installation can be wholly tested.
++ */
++class FilledStandardUpdatePath extends UpdatePathTestCase {
++  public static function getInfo() {
++    return array(
++      'name'  => 'Basic standard + all profile update path, populated database',
++      'description'  => 'Basic update path tests for a standard profile install with all enabled modules and a populated database.',
++      'group' => 'Upgrade path',
++    );
++  }
++
++  public function setUp() {
++    // Path to the database dump files.
++    $this->databaseDumpFiles = array(
++      drupal_get_path('module', 'simpletest') . '/tests/upgrade/drupal-7.filled.standard_all.database.php.gz',
++    );
++    parent::setUp();
++  }
++
++  /**
++   * Tests a successful point release update.
++   */
++  public function testFilledStandardUpdate() {
++    $this->assertTrue($this->performUpgrade(), t('The upgrade was completed successfully.'));
++
++    // Hit the frontpage.
++    $this->drupalGet('');
++    $this->assertResponse(200);
++
++    // Verify that we are still logged in.
++    $this->drupalGet('user');
++    $this->clickLink(t('Edit'));
++    $this->assertEqual($this->getUrl(), url('user/1/edit', array('absolute' => TRUE)), t('We are still logged in as admin at the end of the upgrade.'));
++
++    // Logout and verify that we can login back in with our initial password.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // The previous login should've triggered a password rehash, so login one
++    // more time to make sure the new hash is readable.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // Test that the site name is correctly displayed.
++    $this->assertText('drupal', t('The site name is correctly displayed.'));
++
++    // Verify that the main admin sections are available.
++    $this->drupalGet('admin');
++    $this->assertText(t('Content'));
++    $this->assertText(t('Appearance'));
++    $this->assertText(t('People'));
++    $this->assertText(t('Configuration'));
++    $this->assertText(t('Reports'));
++    $this->assertText(t('Structure'));
++    $this->assertText(t('Modules'));
++
++    // Confirm that no {menu_links} entry exists for user/autocomplete.
++    $result = db_query('SELECT COUNT(*) FROM {menu_links} WHERE link_path = :user_autocomplete', array(':user_autocomplete' => 'user/autocomplete'))->fetchField();
++    $this->assertFalse($result, t('No {menu_links} entry exists for user/autocomplete'));
++  }
++}
++
++/**
++ * Performs point release update tests on a populated database.
++ *
++ * Loads an installation of Drupal 7.0 and runs the update process on it.
++ *
++ * The install contains the minimal profile modules (along with generated
++ * content) so that an update from of a site under this profile may be tested.
++ */
++class FilledMinimalUpdatePath extends UpdatePathTestCase {
++  public static function getInfo() {
++    return array(
++      'name'  => 'Basic minimal profile update path, populated database',
++      'description'  => 'Basic update path tests for a minimal profile install with a populated database.',
++      'group' => 'Upgrade path',
++    );
++  }
++
++  public function setUp() {
++    // Path to the database dump files.
++    $this->databaseDumpFiles = array(
++      drupal_get_path('module', 'simpletest') . '/tests/upgrade/drupal-7.filled.minimal.database.php.gz',
++    );
++    parent::setUp();
++  }
++
++  /**
++   * Tests a successful point release update.
++   */
++  public function testFilledStandardUpdate() {
++    $this->assertTrue($this->performUpgrade(), t('The upgrade was completed successfully.'));
++
++    // Hit the frontpage.
++    $this->drupalGet('');
++    $this->assertResponse(200);
++
++    // Verify that we are still logged in.
++    $this->drupalGet('user');
++    $this->clickLink(t('Edit'));
++    $this->assertEqual($this->getUrl(), url('user/1/edit', array('absolute' => TRUE)), t('We are still logged in as admin at the end of the upgrade.'));
++
++    // Logout and verify that we can login back in with our initial password.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // The previous login should've triggered a password rehash, so login one
++    // more time to make sure the new hash is readable.
++    $this->drupalLogout();
++    $this->drupalLogin((object) array(
++      'uid' => 1,
++      'name' => 'admin',
++      'pass_raw' => 'admin',
++    ));
++
++    // Test that the site name is correctly displayed.
++    $this->assertText('drupal', t('The site name is correctly displayed.'));
++
++    // Verify that the main admin sections are available.
++    $this->drupalGet('admin');
++    $this->assertText(t('Content'));
++    $this->assertText(t('Appearance'));
++    $this->assertText(t('People'));
++    $this->assertText(t('Configuration'));
++    $this->assertText(t('Reports'));
++    $this->assertText(t('Structure'));
++    $this->assertText(t('Modules'));
++
++    // Confirm that no {menu_links} entry exists for user/autocomplete.
++    $result = db_query('SELECT COUNT(*) FROM {menu_links} WHERE link_path = :user_autocomplete', array(':user_autocomplete' => 'user/autocomplete'))->fetchField();
++    $this->assertFalse($result, t('No {menu_links} entry exists for user/autocomplete'));
++  }
++}
+diff --git a/modules/simpletest/tests/url_alter_test.module b/modules/simpletest/tests/url_alter_test.module
+index e229ab9..9287ff5 100644
+--- a/modules/simpletest/tests/url_alter_test.module
++++ b/modules/simpletest/tests/url_alter_test.module
+@@ -30,6 +30,10 @@ function url_alter_test_foo() {
+  * Implements hook_url_inbound_alter().
+  */
+ function url_alter_test_url_inbound_alter(&$path, $original_path, $path_language) {
++  if (!request_path() && !empty($_GET['q'])) {
++    drupal_set_message("\$_GET['q'] is non-empty with an empty request path.");
++  }
++
+   // Rewrite user/username to user/uid.
+   if (preg_match('!^user/([^/]+)(/.*)?!', $path, $matches)) {
+     if ($account = user_load_by_name($matches[1])) {
+diff --git a/modules/statistics/statistics.module b/modules/statistics/statistics.module
+index 69e06f3..a9c944b 100644
+--- a/modules/statistics/statistics.module
++++ b/modules/statistics/statistics.module
+@@ -75,11 +75,14 @@ function statistics_exit() {
+   }
+   if (variable_get('statistics_enable_access_log', 0)) {
+     drupal_bootstrap(DRUPAL_BOOTSTRAP_SESSION);
++
++    // For anonymous users unicode.inc will not have been loaded.
++    include_once DRUPAL_ROOT . '/includes/unicode.inc';
+     // Log this page access.
+     db_insert('accesslog')
+       ->fields(array(
+-        'title' => strip_tags(drupal_get_title()),
+-        'path' => $_GET['q'],
++        'title' => truncate_utf8(strip_tags(drupal_get_title()), 255),
++        'path' => truncate_utf8($_GET['q'], 255),
+         'url' => isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '',
+         'hostname' => ip_address(),
+         'uid' => $user->uid,
+diff --git a/modules/statistics/statistics.test b/modules/statistics/statistics.test
+index 126828f..f12490a 100644
+--- a/modules/statistics/statistics.test
++++ b/modules/statistics/statistics.test
+@@ -63,9 +63,10 @@ class StatisticsLoggingTestCase extends DrupalWebTestCase {
+   function setUp() {
+     parent::setUp('statistics');
+ 
++    $this->auth_user = $this->drupalCreateUser(array('access content', 'create page content', 'edit own page content'));
++
+     // Ensure we have a node page to access.
+-    $this->node = $this->drupalCreateNode();
+-    $this->auth_user = $this->drupalCreateUser();
++    $this->node = $this->drupalCreateNode(array('title' => $this->randomName(255), 'uid' => $this->auth_user->uid));
+ 
+     // Enable page caching.
+     variable_set('cache', TRUE);
+@@ -116,6 +117,27 @@ class StatisticsLoggingTestCase extends DrupalWebTestCase {
+     $this->assertEqual(array_intersect_key($log[5], $expected), $expected);
+     $node_counter = statistics_get($this->node->nid);
+     $this->assertIdentical($node_counter['totalcount'], '3');
++
++    // Visit edit page to generate a title greater than 255.
++    $path = 'node/' . $this->node->nid . '/edit';
++    $expected = array(
++      'title' => truncate_utf8(t('Edit Basic page') . ' ' . $this->node->title, 255),
++      'path' => $path,
++    );
++    $this->drupalGet($path);
++    $log = db_query('SELECT * FROM {accesslog}')->fetchAll(PDO::FETCH_ASSOC);
++    $this->assertTrue(is_array($log) && count($log) == 7, t('Page request was logged.'));
++    $this->assertEqual(array_intersect_key($log[6], $expected), $expected);
++
++    // Create a path longer than 255 characters.
++    $long_path = $this->randomName(256);
++
++    // Test that the long path is properly truncated when logged.
++    $this->drupalGet($long_path);
++    $log = db_query('SELECT * FROM {accesslog}')->fetchAll(PDO::FETCH_ASSOC);
++    $this->assertTrue(is_array($log) && count($log) == 8, 'Page request was logged for a path over 255 characters.');
++    $this->assertEqual($log[7]['path'], truncate_utf8($long_path, 255));
++
+   }
+ }
+ 
+diff --git a/modules/system/system.admin.inc b/modules/system/system.admin.inc
+index e250bf1..6368590 100644
+--- a/modules/system/system.admin.inc
++++ b/modules/system/system.admin.inc
+@@ -811,6 +811,7 @@ function system_modules($form, $form_state = array()) {
+       // Only display visible modules.
+       elseif (isset($visible_files[$requires])) {
+         $requires_name = $files[$requires]->info['name'];
++        // Disable this module if it is incompatible with the dependency's version.
+         if ($incompatible_version = drupal_check_incompatibility($v, str_replace(DRUPAL_CORE_COMPATIBILITY . '-', '', $files[$requires]->info['version']))) {
+           $extra['requires'][$requires] = t('@module (<span class="admin-missing">incompatible with</span> version @version)', array(
+             '@module' => $requires_name . $incompatible_version,
+@@ -818,6 +819,14 @@ function system_modules($form, $form_state = array()) {
+           ));
+           $extra['disabled'] = TRUE;
+         }
++        // Disable this module if the dependency is incompatible with this
++        // version of Drupal core.
++        elseif ($files[$requires]->info['core'] != DRUPAL_CORE_COMPATIBILITY) {
++          $extra['requires'][$requires] = t('@module (<span class="admin-missing">incompatible with</span> this version of Drupal core)', array(
++            '@module' => $requires_name,
++          ));
++          $extra['disabled'] = TRUE;
++        }
+         elseif ($files[$requires]->status) {
+           $extra['requires'][$requires] = t('@module (<span class="admin-enabled">enabled</span>)', array('@module' => $requires_name));
+         }
+diff --git a/modules/system/system.api.php b/modules/system/system.api.php
+index ae76ab4..f241eea 100644
+--- a/modules/system/system.api.php
++++ b/modules/system/system.api.php
+@@ -991,7 +991,8 @@ function hook_menu_get_item_alter(&$router_item, $path, $original_map) {
+  *   );
+  * @endcode
+  * When path 'my-module/foo/edit' is requested, integer 1 will be replaced
+- * with 'foo' and passed to the callback function.
++ * with 'foo' and passed to the callback function. Note that wildcards may not
++ * be used as the first component.
+  *
+  * Registered paths may also contain special "auto-loader" wildcard components
+  * in the form of '%mymodule_abc', where the '%' part means that this path
+@@ -1877,6 +1878,15 @@ function hook_mail_alter(&$message) {
+  * hook in order to reorder the implementing modules, which are otherwise
+  * ordered by the module's system weight.
+  *
++ * Note that hooks invoked using drupal_alter() can have multiple variations
++ * (such as hook_form_alter() and hook_form_FORM_ID_alter()). drupal_alter()
++ * will call all such variants defined by a single module in turn. For the
++ * purposes of hook_module_implements_alter(), these variants are treated as
++ * a single hook. Thus, to ensure that your implementation of
++ * hook_form_FORM_ID_alter() is called at the right time, you will have to
++ * have to change the order of hook_form_alter() implementation in
++ * hook_module_implements_alter().
++ *
+  * @param $implementations
+  *   An array keyed by the module's name. The value of each item corresponds
+  *   to a $group, which is usually FALSE, unless the implementation is in a
+@@ -2881,7 +2891,7 @@ function hook_requirements($phase) {
+   // Test PHP version
+   $requirements['php'] = array(
+     'title' => $t('PHP'),
+-    'value' => ($phase == 'runtime') ? l(phpversion(), 'admin/logs/status/php') : phpversion(),
++    'value' => ($phase == 'runtime') ? l(phpversion(), 'admin/reports/status/php') : phpversion(),
+   );
+   if (version_compare(phpversion(), DRUPAL_MINIMUM_PHP) < 0) {
+     $requirements['php']['description'] = $t('Your PHP installation is too old. Drupal requires at least PHP %version.', array('%version' => DRUPAL_MINIMUM_PHP));
+@@ -2903,7 +2913,7 @@ function hook_requirements($phase) {
+       );
+     }
+ 
+-    $requirements['cron']['description'] .= ' ' . $t('You can <a href="@cron">run cron manually</a>.', array('@cron' => url('admin/logs/status/run-cron')));
++    $requirements['cron']['description'] .= ' ' . $t('You can <a href="@cron">run cron manually</a>.', array('@cron' => url('admin/reports/status/run-cron')));
+ 
+     $requirements['cron']['title'] = $t('Cron maintenance tasks');
+   }
+@@ -2930,7 +2940,8 @@ function hook_requirements($phase) {
+  * By declaring the tables used by your module via an implementation of
+  * hook_schema(), these tables will be available on all supported database
+  * engines. You don't have to deal with the different SQL dialects for table
+- * creation and alteration of the supported database engines *
++ * creation and alteration of the supported database engines.
++ *
+  * See the Schema API Handbook at http://drupal.org/node/146843 for
+  * details on schema definition structures.
+  *
+diff --git a/modules/system/system.base.css b/modules/system/system.base.css
+index a6748de..addbf11 100644
+--- a/modules/system/system.base.css
++++ b/modules/system/system.base.css
+@@ -157,12 +157,9 @@ table.sticky-header {
+ .progress .percentage {
+   float: right; /* LTR */
+ }
+-.progress-disabled {
+-  float: left; /* LTR */
+-}
+ /* Throbber */
+ .ajax-progress {
+-  float: left; /* LTR */
++  display: inline-block;
+ }
+ .ajax-progress .throbber {
+   background: transparent url(../../misc/throbber.gif) no-repeat 0px -18px;
+@@ -171,6 +168,9 @@ table.sticky-header {
+   margin: 2px;
+   width: 15px;
+ }
++.ajax-progress .message {
++  padding-left: 20px;
++}
+ tr .ajax-progress .throbber {
+   margin: 0 2px;
+ }
+diff --git a/modules/system/system.install b/modules/system/system.install
+index 219f067..95ee8c5 100644
+--- a/modules/system/system.install
++++ b/modules/system/system.install
+@@ -465,7 +465,7 @@ function system_requirements($phase) {
+       $requirements['update status'] = array(
+         'value' => $t('Not enabled'),
+         'severity' => REQUIREMENT_WARNING,
+-        'description' => $t('Update notifications are not enabled. It is <strong>highly recommended</strong> that you enable the update status module from the <a href="@module">module administration page</a> in order to stay up-to-date on new releases. For more information, <a href="@update">Update status handbook page</a>.', array('@update' => 'http://drupal.org/handbook/modules/update', '@module' => url('admin/modules'))),
++        'description' => $t('Update notifications are not enabled. It is <strong>highly recommended</strong> that you enable the update manager module from the <a href="@module">module administration page</a> in order to stay up-to-date on new releases. For more information, <a href="@update">Update status handbook page</a>.', array('@update' => 'http://drupal.org/handbook/modules/update', '@module' => url('admin/modules'))),
+       );
+     }
+     else {
+diff --git a/modules/system/system.test b/modules/system/system.test
+index a75153f..8b305bc 100644
+--- a/modules/system/system.test
++++ b/modules/system/system.test
+@@ -422,6 +422,35 @@ class ModuleDependencyTestCase extends ModuleTestCase {
+   }
+ 
+   /**
++   * Tests enabling a module that depends on an incompatible version of a module.
++   */
++  function testIncompatibleModuleVersionDependency() {
++    // Test that the system_incompatible_module_version_dependencies_test is
++    // marked as having an incompatible dependency.
++    $this->drupalGet('admin/modules');
++    $this->assertRaw(t('@module (<span class="admin-missing">incompatible with</span> version @version)', array(
++      '@module' => 'System incompatible module version test (>2.0)',
++      '@version' => '1.0',
++    )), 'A module that depends on an incompatible version of a module is marked as such.');
++    $checkbox = $this->xpath('//input[@type="checkbox" and @disabled="disabled" and @name="modules[Testing][system_incompatible_module_version_dependencies_test][enable]"]');
++    $this->assert(count($checkbox) == 1, t('Checkbox for the module is disabled.'));
++  }
++
++  /**
++   * Tests enabling a module that depends on a module with an incompatible core version.
++   */
++  function testIncompatibleCoreVersionDependency() {
++    // Test that the system_incompatible_core_version_dependencies_test is
++    // marked as having an incompatible dependency.
++    $this->drupalGet('admin/modules');
++    $this->assertRaw(t('@module (<span class="admin-missing">incompatible with</span> this version of Drupal core)', array(
++      '@module' => 'System incompatible core version test',
++    )), 'A module that depends on a module with an incompatible core version is marked as such.');
++    $checkbox = $this->xpath('//input[@type="checkbox" and @disabled="disabled" and @name="modules[Testing][system_incompatible_core_version_dependencies_test][enable]"]');
++    $this->assert(count($checkbox) == 1, t('Checkbox for the module is disabled.'));
++  }
++
++  /**
+    * Tests enabling a module that depends on a module which fails hook_requirements().
+    */
+   function testEnableRequirementsFailureDependency() {
+@@ -2086,7 +2115,7 @@ class UpdateScriptFunctionalTest extends DrupalWebTestCase {
+   }
+ 
+   function setUp() {
+-    parent::setUp();
++    parent::setUp('update_script_test');
+     $this->update_url = $GLOBALS['base_url'] . '/update.php';
+     $this->update_user = $this->drupalCreateUser(array('administer software updates'));
+   }
+@@ -2123,6 +2152,58 @@ class UpdateScriptFunctionalTest extends DrupalWebTestCase {
+   }
+ 
+   /**
++   * Tests that requirements warnings and errors are correctly displayed.
++   */
++  function testRequirements() {
++    $this->drupalLogin($this->update_user);
++
++    // If there are no requirements warnings or errors, we expect to be able to
++    // go through the update process uninterrupted.
++    $this->drupalGet($this->update_url, array('external' => TRUE));
++    $this->drupalPost(NULL, array(), t('Continue'));
++    $this->assertText(t('No pending updates.'), t('End of update process was reached.'));
++    // Confirm that all caches were cleared.
++    $this->assertText(t('hook_flush_caches() invoked for update_script_test.module.'), 'Caches were cleared when there were no requirements warnings or errors.');
++
++    // If there is a requirements warning, we expect it to be initially
++    // displayed, but clicking the link to proceed should allow us to go
++    // through the rest of the update process uninterrupted.
++
++    // First, run this test with pending updates to make sure they can be run
++    // successfully.
++    variable_set('update_script_test_requirement_type', REQUIREMENT_WARNING);
++    drupal_set_installed_schema_version('update_script_test', drupal_get_installed_schema_version('update_script_test') - 1);
++    $this->drupalGet($this->update_url, array('external' => TRUE));
++    $this->assertText('This is a requirements warning provided by the update_script_test module.');
++    $this->clickLink('try again');
++    $this->assertNoText('This is a requirements warning provided by the update_script_test module.');
++    $this->drupalPost(NULL, array(), t('Continue'));
++    $this->drupalPost(NULL, array(), t('Apply pending updates'));
++    $this->assertText(t('The update_script_test_update_7000() update was executed successfully.'), t('End of update process was reached.'));
++    // Confirm that all caches were cleared.
++    $this->assertText(t('hook_flush_caches() invoked for update_script_test.module.'), 'Caches were cleared after resolving a requirements warning and applying updates.');
++
++    // Now try again without pending updates to make sure that works too.
++    $this->drupalGet($this->update_url, array('external' => TRUE));
++    $this->assertText('This is a requirements warning provided by the update_script_test module.');
++    $this->clickLink('try again');
++    $this->assertNoText('This is a requirements warning provided by the update_script_test module.');
++    $this->drupalPost(NULL, array(), t('Continue'));
++    $this->assertText(t('No pending updates.'), t('End of update process was reached.'));
++    // Confirm that all caches were cleared.
++    $this->assertText(t('hook_flush_caches() invoked for update_script_test.module.'), 'Caches were cleared after applying updates and re-running the script.');
++
++    // If there is a requirements error, it should be displayed even after
++    // clicking the link to proceed (since the problem that triggered the error
++    // has not been fixed).
++    variable_set('update_script_test_requirement_type', REQUIREMENT_ERROR);
++    $this->drupalGet($this->update_url, array('external' => TRUE));
++    $this->assertText('This is a requirements error provided by the update_script_test module.');
++    $this->clickLink('try again');
++    $this->assertText('This is a requirements error provided by the update_script_test module.');
++  }
++
++  /**
+    * Tests the effect of using the update script on the theme system.
+    */
+   function testThemeSystem() {
+diff --git a/modules/taxonomy/taxonomy.module b/modules/taxonomy/taxonomy.module
+index df047e7..379de71 100644
+--- a/modules/taxonomy/taxonomy.module
++++ b/modules/taxonomy/taxonomy.module
+@@ -863,7 +863,8 @@ function taxonomy_vocabulary_get_names() {
+  *   A taxonomy term ID.
+  *
+  * @return
+- *   An array of term objects which are the parents of the term $tid.
++ *   An array of term objects which are the parents of the term $tid, or an
++ *   empty array if parents are not found.
+  */
+ function taxonomy_get_parents($tid) {
+   $parents = &drupal_static(__FUNCTION__, array());
+diff --git a/modules/taxonomy/taxonomy.pages.inc b/modules/taxonomy/taxonomy.pages.inc
+index 2a8d961..2630413 100644
+--- a/modules/taxonomy/taxonomy.pages.inc
++++ b/modules/taxonomy/taxonomy.pages.inc
+@@ -77,7 +77,35 @@ function taxonomy_term_feed($term) {
+ }
+ 
+ /**
+- * Helper function for autocompletion
++ * Page callback: Outputs JSON for taxonomy autocomplete suggestions.
++ *
++ * Path: taxonomy/autocomplete
++ *
++ * This callback outputs term name suggestions in response to Ajax requests
++ * made by the taxonomy autocomplete widget for taxonomy term reference
++ * fields. The output is a JSON object of plain-text term suggestions, keyed by
++ * the user-entered value with the completed term name appended.  Term names
++ * containing commas are wrapped in quotes.
++ *
++ * For example, suppose the user has entered the string 'red fish, blue' in the
++ * field, and there are two taxonomy terms, 'blue fish' and 'blue moon'. The
++ * JSON output would have the following structure:
++ * @code
++ *   {
++ *     "red fish, blue fish": "blue fish",
++ *     "red fish, blue moon": "blue moon",
++ *   };
++ * @endcode
++ *
++ * @param $field_name
++ *   The name of the term reference field.
++ * @param $tags_typed
++ *   (optional) A comma-separated list of term names entered in the
++ *   autocomplete form element. Only the last term is used for autocompletion.
++ *   Defaults to '' (an empty string).
++ *
++ * @see taxonomy_menu()
++ * @see taxonomy_field_widget_info()
+  */
+ function taxonomy_autocomplete($field_name, $tags_typed = '') {
+   $field = field_info_field($field_name);
+diff --git a/scripts/dump-database-d7.sh b/scripts/dump-database-d7.sh
+new file mode 100644
+index 0000000..7692c40
+--- /dev/null
++++ b/scripts/dump-database-d7.sh
+@@ -0,0 +1,90 @@
++#!/usr/bin/env php
++<?php
++
++/**
++ * @file
++ * Dumps a Drupal 7 database into a PHP script to test the upgrade process.
++ *
++ * Run this script at the root of an existing Drupal 7 installation.
++ *
++ * The output of this script is a PHP script that can be run inside Drupal 7
++ * and recreates the Drupal 7 database as dumped. Transient data from cache,
++ * session, and watchdog tables are not recorded.
++ */
++
++// Define default settings.
++define('DRUPAL_ROOT', getcwd());
++$cmd = 'index.php';
++$_SERVER['HTTP_HOST']       = 'default';
++$_SERVER['REMOTE_ADDR']     = '127.0.0.1';
++$_SERVER['SERVER_SOFTWARE'] = NULL;
++$_SERVER['REQUEST_METHOD']  = 'GET';
++$_SERVER['QUERY_STRING']    = '';
++$_SERVER['PHP_SELF']        = $_SERVER['REQUEST_URI'] = '/';
++$_SERVER['HTTP_USER_AGENT'] = 'console';
++
++// Bootstrap Drupal.
++include_once './includes/bootstrap.inc';
++drupal_bootstrap(DRUPAL_BOOTSTRAP_FULL);
++
++// Include the utility drupal_var_export() function.
++include_once dirname(__FILE__) . '/../includes/utility.inc';
++
++// Output the PHP header.
++$output = <<<ENDOFHEADER
++<?php
++
++/**
++ * @file
++ * Filled installation of Drupal 7.0, for test purposes.
++ *
++ * This file was generated by the dump-database-d7.sh tool, from an
++ * installation of Drupal 7, filled with data using the generate-d7-content.sh
++ * tool. It has the following modules installed:
++
++ENDOFHEADER;
++
++foreach (module_list() as $module) {
++  $output .= " *  - $module\n";
++}
++$output .= " */\n\n";
++
++// Get the current schema, order it by table name.
++$schema = drupal_get_schema();
++ksort($schema);
++
++// Export all the tables in the schema.
++foreach ($schema as $table => $data) {
++  // Remove descriptions to save time and code.
++  unset($data['description']);
++  foreach ($data['fields'] as &$field) {
++    unset($field['description']);
++  }
++
++  // Dump the table structure.
++  $output .= "db_create_table('" . $table . "', " . drupal_var_export($data) . ");\n";
++
++  // Don't output values for those tables.
++  if (substr($table, 0, 5) == 'cache' || $table == 'sessions' || $table == 'watchdog') {
++    $output .= "\n";
++    continue;
++  }
++
++  // Prepare the export of values.
++  $result = db_query('SELECT * FROM {'. $table .'}', array(), array('fetch' => PDO::FETCH_ASSOC));
++  $insert = '';
++  foreach ($result as $record) {
++    $insert .= '->values('. drupal_var_export($record) .")\n";
++  }
++
++  // Dump the values if there are some.
++  if ($insert) {
++    $output .= "db_insert('". $table . "')->fields(". drupal_var_export(array_keys($data['fields'])) .")\n";
++    $output .= $insert;
++    $output .= "->execute();\n";
++  }
++
++  $output .= "\n";
++}
++
++print $output;
+diff --git a/scripts/generate-d7-content.sh b/scripts/generate-d7-content.sh
+new file mode 100644
+index 0000000..2ad9e52
+--- /dev/null
++++ b/scripts/generate-d7-content.sh
+@@ -0,0 +1,318 @@
++#!/usr/bin/env php
++<?php
++
++/**
++ * @file
++ * Generates content for a Drupal 7 database to test the upgrade process.
++ *
++ * Run this script at the root of an existing Drupal 6 installation.
++ * Steps to use this generation script:
++ * - Install drupal 7.
++ * - Run this script from your Drupal ROOT directory.
++ * - Use the dump-database-d7.sh to generate the D7 file
++ *   modules/simpletest/tests/upgrade/database.filled.php
++ */
++
++// Define settings.
++$cmd = 'index.php';
++define('DRUPAL_ROOT', getcwd());
++$_SERVER['HTTP_HOST']       = 'default';
++$_SERVER['PHP_SELF']        = '/index.php';
++$_SERVER['REMOTE_ADDR']     = '127.0.0.1';
++$_SERVER['SERVER_SOFTWARE'] = NULL;
++$_SERVER['REQUEST_METHOD']  = 'GET';
++$_SERVER['QUERY_STRING']    = '';
++$_SERVER['PHP_SELF']        = $_SERVER['REQUEST_URI'] = '/';
++$_SERVER['HTTP_USER_AGENT'] = 'console';
++$modules_to_enable          = array('path', 'poll', 'taxonomy');
++
++// Bootstrap Drupal.
++include_once './includes/bootstrap.inc';
++drupal_bootstrap(DRUPAL_BOOTSTRAP_FULL);
++
++// Enable requested modules.
++require_once DRUPAL_ROOT . '/' . variable_get('password_inc', 'includes/password.inc');
++include_once './modules/system/system.admin.inc';
++$form = system_modules();
++foreach ($modules_to_enable as $module) {
++  $form_state['values']['status'][$module] = TRUE;
++}
++$form_state['values']['disabled_modules'] = $form['disabled_modules'];
++system_modules_submit(NULL, $form_state);
++unset($form_state);
++
++// Run cron after installing.
++drupal_cron_run();
++
++// Create six users.
++$query = db_insert('users')->fields(array('uid', 'name', 'pass', 'mail', 'status', 'created', 'access'));
++for ($i = 0; $i < 6; $i++) {
++  $name = "test user $i";
++  $pass = md5("test PassW0rd $i !(.)");
++  $mail = "test$i@example.com";
++  $now = mktime(0, 0, 0, 1, $i + 1, 2010);
++  $query->values(array(db_next_id(), $name, user_hash_password($pass), $mail, 1, $now, $now));
++}
++$query->execute();
++
++// Create vocabularies and terms.
++
++if (module_exists('taxonomy')) {
++  $terms = array();
++
++  // All possible combinations of these vocabulary properties.
++  $hierarchy = array(0, 1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2);
++  $multiple  = array(0, 1, 0, 1, 0, 1, 0, 1, 0, 1, 0, 1);
++  $required  = array(0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1);
++
++  $voc_id = 0;
++  $term_id = 0;
++  for ($i = 0; $i < 24; $i++) {
++    $vocabulary = new stdClass;
++    ++$voc_id;
++    $vocabulary->name = "vocabulary $voc_id (i=$i)";
++    $vocabulary->machine_name = 'vocabulary_' . $voc_id . '_' . $i;
++    $vocabulary->description = "description of ". $vocabulary->name;
++    $vocabulary->multiple = $multiple[$i % 12];
++    $vocabulary->required = $required[$i % 12];
++    $vocabulary->relations = 1;
++    $vocabulary->hierarchy = $hierarchy[$i % 12];
++    $vocabulary->weight = $i;
++    taxonomy_vocabulary_save($vocabulary);
++    $field = array(
++      'field_name' => 'taxonomy_'. $vocabulary->machine_name,
++      'module' => 'taxonomy',
++      'type' => 'taxonomy_term_reference',
++      'cardinality' => $vocabulary->multiple || $vocabulary->tags ? FIELD_CARDINALITY_UNLIMITED : 1,
++      'settings' => array(
++        'required' => $vocabulary->required ? TRUE : FALSE,
++        'allowed_values' => array(
++          array(
++            'vocabulary' => $vocabulary->machine_name,
++            'parent' => 0,
++          ),
++        ),
++      ),
++    );
++    field_create_field($field);
++    $node_types = $i > 11 ? array('page') : array_keys(node_type_get_types());
++    foreach ($node_types as $bundle) {
++      $instance = array(
++        'label' => $vocabulary->name,
++        'field_name' => $field['field_name'],
++        'bundle' => $bundle,
++        'entity_type' => 'node',
++        'settings' => array(),
++        'description' => $vocabulary->help,
++        'required' => $vocabulary->required,
++        'widget' => array(),
++        'display' => array(
++          'default' => array(
++            'type' => 'taxonomy_term_reference_link',
++            'weight' => 10,
++          ),
++          'teaser' => array(
++            'type' => 'taxonomy_term_reference_link',
++            'weight' => 10,
++          ),
++        ),
++      );
++      if ($vocabulary->tags) {
++        $instance['widget'] = array(
++          'type' => 'taxonomy_autocomplete',
++          'module' => 'taxonomy',
++          'settings' => array(
++            'size' => 60,
++            'autocomplete_path' => 'taxonomy/autocomplete',
++          ),
++        );
++      }
++      else {
++        $instance['widget'] = array(
++          'type' => 'select',
++          'module' => 'options',
++          'settings' => array(),
++        );
++      }
++      field_create_instance($instance);
++    }
++    $parents = array();
++    // Vocabularies without hierarchy get one term; single parent vocabularies
++    // get one parent and one child term. Multiple parent vocabularies get
++    // three terms: t0, t1, t2 where t0 is a parent of both t1 and t2.
++    for ($j = 0; $j < $vocabulary->hierarchy + 1; $j++) {
++      $term = new stdClass;
++      $term->vocabulary_machine_name = $vocabulary->machine_name;
++      // For multiple parent vocabularies, omit the t0-t1 relation, otherwise
++      // every parent in the vocabulary is a parent.
++      $term->parent = $vocabulary->hierarchy == 2 && i == 1 ? array() : $parents;
++      ++$term_id;
++      $term->name = "term $term_id of vocabulary $voc_id (j=$j)";
++      $term->description = 'description of ' . $term->name;
++      $term->format = 'filtered_html';
++      $term->weight = $i * 3 + $j;
++      taxonomy_term_save($term);
++      $terms[] = $term->tid;
++      $term_vocabs[$term->tid] = 'taxonomy_' . $vocabulary->machine_name;
++      $parents[] = $term->tid;
++    }
++  }
++}
++
++$node_id = 0;
++$revision_id = 0;
++module_load_include('inc', 'node', 'node.pages');
++for ($i = 0; $i < 24; $i++) {
++  $uid = intval($i / 8) + 3;
++  $user = user_load($uid);
++  $node = new stdClass();
++  $node->uid = $uid;
++  $node->type = $i < 12 ? 'page' : 'story';
++  $node->sticky = 0;
++  ++$node_id;
++  ++$revision_id;
++  $node->title = "node title $node_id rev $revision_id (i=$i)";
++  $node->language = LANGUAGE_NONE;
++  $body_text =  str_repeat("node body ($node->type) - $i", 100);
++  $node->body[$node->language][0]['value'] = $body_text;
++  $node->body[$node->language][0]['summary'] = text_summary($body_text);
++  $node->body[$node->language][0]['format'] = 'filtered_html';
++  $node->status = intval($i / 4) % 2;
++  $node->revision = $i < 12;
++  $node->promote = $i % 2;
++  $node->created = $now + $i * 86400;
++  $node->log = "added $i node";
++  // Make every term association different a little. For nodes with revisions,
++  // make the initial revision have a different set of terms than the
++  // newest revision.
++  $items = array();
++  if (module_exists('taxonomy')) {
++    if ($node->revision) {
++      $node_terms = array($terms[$i], $terms[47-$i]);
++    }
++    else {
++      $node_terms = $terms;
++      unset($node_terms[$i], $node_terms[47 - $i]);
++    }
++    foreach ($node_terms as $tid) {
++      $field_name = $term_vocabs[$tid];
++      $node->{$field_name}[LANGUAGE_NONE][] = array('tid' => $tid);
++    }
++  }
++  $node->path = array('alias' => "content/$node->created");
++  node_save($node);
++  if ($node->revision) {
++    $user = user_load($uid + 3);
++    ++$revision_id;
++    $node->title .= " rev2 $revision_id";
++    $body_text =  str_repeat("node revision body ($node->type) - $i", 100);
++    $node->body[$node->language][0]['value'] = $body_text;
++    $node->body[$node->language][0]['summary'] = text_summary($body_text);
++    $node->body[$node->language][0]['format'] = 'filtered_html';
++    $node->log = "added $i revision";
++    $node_terms = $terms;
++    unset($node_terms[$i], $node_terms[47 - $i]);
++    foreach ($node_terms as $tid) {
++      $field_name = $term_vocabs[$tid];
++      $node->{$field_name}[LANGUAGE_NONE][] = array('tid' => $tid);
++    }
++    node_save($node);
++  }
++}
++
++if (module_exists('poll')) {
++  // Create poll content.
++  for ($i = 0; $i < 12; $i++) {
++    $uid = intval($i / 4) + 3;
++    $user = user_load($uid);
++    $node = new stdClass();
++    $node->uid = $uid;
++    $node->type = 'poll';
++    $node->sticky = 0;
++    $node->title = "poll title $i";
++    $node->language = LANGUAGE_NONE;
++    $node->status = intval($i / 2) % 2;
++    $node->revision = 1;
++    $node->promote = $i % 2;
++    $node->created = REQUEST_TIME + $i * 43200;
++    $node->runtime = 0;
++    $node->active = 1;
++    $node->log = "added $i poll";
++    $node->path = array('alias' => "content/poll/$i");
++
++    $nbchoices = ($i % 4) + 2;
++    for ($c = 0; $c < $nbchoices; $c++) {
++      $node->choice[] = array('chtext' => "Choice $c for poll $i", 'chvotes' => 0, 'weight' => 0);
++    }
++    node_save($node);
++    $path = array(
++      'alias' => "content/poll/$i/results",
++      'source' => "node/$node->nid/results",
++    );
++    path_save($path);
++
++    // Add some votes.
++    $node = node_load($node->nid);
++    $choices = array_keys($node->choice);
++    $original_user = $GLOBALS['user'];
++    for ($v = 0; $v < ($i % 4); $v++) {
++      drupal_static_reset('ip_address');
++      $_SERVER['REMOTE_ADDR'] = "127.0.$v.1";
++      $GLOBALS['user'] = drupal_anonymous_user();// We should have already allowed anon to vote.
++      $c = $v % $nbchoices;
++      $form_state = array();
++      $form_state['values']['choice'] = $choices[$c];
++      $form_state['values']['op'] = t('Vote');
++      drupal_form_submit('poll_view_voting', $form_state, $node);
++    }
++  }
++}
++
++// Test that upgrade works even on a bundle whose parent module was disabled.
++$uid = 6;
++$user = user_load($uid);
++$node = new stdClass();
++$node->uid = $uid;
++$node->type = 'broken';
++$body_text = str_repeat("node body ($node_type) - 37", 100);
++$node->sticky = 0;
++$node->title = "node title 24";
++$node->language = LANGUAGE_NONE;
++$node->body[$node->language][0]['value'] = $body_text;
++$node->body[$node->language][0]['summary'] = text_summary($body_text);
++$node->body[$node->language][0]['format']  = 'filtered_html';
++$node->status = 1;
++$node->revision = 0;
++$node->promote = 0;
++$node->created = 1263769200;
++$node->log = "added a broken node";
++$node->path = array('alias' => "content/1263769200");
++node_save($node);
++db_update('node')
++  ->fields(array(
++    'type' => $node_type,
++  ))
++  ->condition('nid', $node->nid)
++  ->execute();
++if (db_table_exists('field_data_body')) {
++  db_update('field_data_body')
++    ->fields(array(
++      'bundle' => $node_type,
++    ))
++    ->condition('entity_id', $node->nid)
++    ->condition('entity_type', 'node')
++    ->execute();
++  db_update('field_revision_body')
++    ->fields(array(
++      'bundle' => $node_type,
++    ))
++    ->condition('entity_id', $node->nid)
++    ->condition('entity_type', 'node')
++    ->execute();
++}
++db_update('field_config_instance')
++  ->fields(array(
++    'bundle' => $node_type,
++  ))
++  ->condition('bundle', 'article')
++  ->execute();
+diff --git a/scripts/test.script b/scripts/test.script
+new file mode 100644
+index 0000000..a45f3f0
+--- /dev/null
++++ b/scripts/test.script
+@@ -0,0 +1,4 @@
++This file is for testing purposes only.
++
++It is used to test the functionality of drupal_get_filename().  See
++BootstrapGetFilenameTestCase::testDrupalGetFilename() for more information.
+diff --git a/themes/seven/style.css b/themes/seven/style.css
+index dea99bf..d2da561 100644
+--- a/themes/seven/style.css
++++ b/themes/seven/style.css
+@@ -851,7 +851,6 @@ ol.task-list li.active {
+   color: #000;
+ }
+ ol.task-list li.done {
+-  color: #393;
+   background: transparent url(images/task-check.png) no-repeat 0 50%;
+   color: green;
+ }
+diff --git a/themes/tests/block_test_theme/block_test_theme.info b/themes/tests/block_test_theme/block_test_theme.info
+new file mode 100644
+index 0000000..06b6e99
+--- /dev/null
++++ b/themes/tests/block_test_theme/block_test_theme.info
+@@ -0,0 +1,14 @@
++name = Block test theme
++description = Theme for testing the block system
++core = 7.x
++hidden = TRUE
++
++regions[sidebar_first] = Left sidebar
++regions_hidden[]  = sidebar_first
++regions[sidebar_second] = Right sidebar
++regions_hidden[]  = sidebar_second
++regions[content] = Content
++regions[header] = Header
++regions[footer] = Footer
++regions[highlighted] = Highlighted
++regions[help] = Help
+diff --git a/themes/tests/block_test_theme/page.tpl.php b/themes/tests/block_test_theme/page.tpl.php
+new file mode 100644
+index 0000000..ba72882
+--- /dev/null
++++ b/themes/tests/block_test_theme/page.tpl.php
+@@ -0,0 +1,78 @@
++<?php
++
++/**
++ * @file
++ * Custom theme implementation to display a single Drupal page without
++ * sidebars. The sidebars are hidden by regions_hidden for this theme, so
++ * the default page.tpl.php will not work without throwing exceptions.
++ */
++?>
++
++  <div id="page-wrapper"><div id="page">
++
++    <div id="header"><div class="section clearfix">
++
++      <?php if ($logo): ?>
++        <a href="<?php print $front_page; ?>" title="<?php print t('Home'); ?>" rel="home" id="logo">
++          <img src="<?php print $logo; ?>" alt="<?php print t('Home'); ?>" />
++        </a>
++      <?php endif; ?>
++
++      <?php if ($site_name || $site_slogan): ?>
++        <div id="name-and-slogan">
++          <?php if ($site_name): ?>
++            <?php if ($title): ?>
++              <div id="site-name"><strong>
++                <a href="<?php print $front_page; ?>" title="<?php print t('Home'); ?>" rel="home"><span><?php print $site_name; ?></span></a>
++              </strong></div>
++            <?php else: /* Use h1 when the content title is empty */ ?>
++              <h1 id="site-name">
++                <a href="<?php print $front_page; ?>" title="<?php print t('Home'); ?>" rel="home"><span><?php print $site_name; ?></span></a>
++              </h1>
++            <?php endif; ?>
++          <?php endif; ?>
++
++          <?php if ($site_slogan): ?>
++            <div id="site-slogan"><?php print $site_slogan; ?></div>
++          <?php endif; ?>
++        </div> <!-- /#name-and-slogan -->
++      <?php endif; ?>
++
++      <?php print render($page['header']); ?>
++
++    </div></div> <!-- /.section, /#header -->
++
++    <?php if ($main_menu || $secondary_menu): ?>
++      <div id="navigation"><div class="section">
++        <?php print theme('links__system_main_menu', array('links' => $main_menu, 'attributes' => array('id' => 'main-menu', 'class' => array('links', 'inline', 'clearfix')), 'heading' => t('Main menu'))); ?>
++        <?php print theme('links__system_secondary_menu', array('links' => $secondary_menu, 'attributes' => array('id' => 'secondary-menu', 'class' => array('links', 'inline', 'clearfix')), 'heading' => t('Secondary menu'))); ?>
++      </div></div> <!-- /.section, /#navigation -->
++    <?php endif; ?>
++
++    <?php if ($breadcrumb): ?>
++      <div id="breadcrumb"><?php print $breadcrumb; ?></div>
++    <?php endif; ?>
++
++    <?php print $messages; ?>
++
++    <div id="main-wrapper"><div id="main" class="clearfix">
++
++      <div id="content" class="column"><div class="section">
++        <?php if ($page['highlighted']): ?><div id="highlighted"><?php print render($page['highlighted']); ?></div><?php endif; ?>
++        <a id="main-content"></a>
++        <?php print render($title_prefix); ?>
++        <?php if ($title): ?><h1 class="title" id="page-title"><?php print $title; ?></h1><?php endif; ?>
++        <?php print render($title_suffix); ?>
++        <?php if ($tabs = render($tabs)): ?><div class="tabs"><?php print $tabs; ?></div><?php endif; ?>
++        <?php print render($page['help']); ?>
++        <?php if ($action_links): ?><ul class="action-links"><?php print render($action_links); ?></ul><?php endif; ?>
++        <?php print render($page['content']); ?>
++        <?php print $feed_icons; ?>
++      </div></div> <!-- /.section, /#content -->
++    </div></div> <!-- /#main, /#main-wrapper -->
++
++    <div id="footer"><div class="section">
++      <?php print render($page['footer']); ?>
++    </div></div> <!-- /.section, /#footer -->
++
++  </div></div> <!-- /#page, /#page-wrapper -->
+diff --git a/update.php b/update.php
+index 23ffa57..2b5d221 100644
+--- a/update.php
++++ b/update.php
+@@ -108,6 +108,9 @@ function update_script_selection_form($form, &$form_state) {
+     $form['links'] = array(
+       '#markup' => theme('item_list', array('items' => update_helpful_links())),
+     );
++
++    // No updates to run, so caches won't get flushed later.  Clear them now.
++    drupal_flush_all_caches();
+   }
+   else {
+     $form['help'] = array(
+@@ -245,7 +248,8 @@ function update_info_page() {
+   $output .= "<li>Install your new files in the appropriate location, as described in the handbook.</li>\n";
+   $output .= "</ol>\n";
+   $output .= "<p>When you have performed the steps above, you may proceed.</p>\n";
+-  $output .= '<form method="post" action="update.php?op=selection&amp;token=' . $token . '"><p><input type="submit" value="Continue" class="form-submit" /></p></form>';
++  $form_action = check_url(drupal_current_script_url(array('op' => 'selection', 'token' => $token)));
++  $output .= '<form method="post" action="' . $form_action . '"><p><input type="submit" value="Continue" class="form-submit" /></p></form>';
+   $output .= "\n";
+   return $output;
+ }
+@@ -316,20 +320,26 @@ function update_extra_requirements($requirements = NULL) {
+ }
+ 
+ /**
+- * Check update requirements and report any errors.
++ * Check update requirements and report any errors or (optionally) warnings.
++ *
++ * @param $skip_warnings
++ *   (optional) If set to TRUE, requirement warnings will be ignored, and a
++ *   report will only be issued if there are requirement errors. Defaults to
++ *   FALSE.
+  */
+-function update_check_requirements() {
++function update_check_requirements($skip_warnings = FALSE) {
+   // Check requirements of all loaded modules.
+   $requirements = module_invoke_all('requirements', 'update');
+   $requirements += update_extra_requirements();
+   $severity = drupal_requirements_severity($requirements);
+ 
+-  // If there are issues, report them.
+-  if ($severity == REQUIREMENT_ERROR) {
++  // If there are errors, always display them. If there are only warnings, skip
++  // them if the caller has indicated they should be skipped.
++  if ($severity == REQUIREMENT_ERROR || ($severity == REQUIREMENT_WARNING && !$skip_warnings)) {
+     update_task_list('requirements');
+     drupal_set_title('Requirements problem');
+     $status_report = theme('status_report', array('requirements' => $requirements));
+-    $status_report .= 'Check the error messages and <a href="' . check_url(request_uri()) . '">try again</a>.';
++    $status_report .= 'Check the error messages and <a href="' . check_url(drupal_requirements_url($severity)) . '">try again</a>.';
+     print theme('update_page', array('content' => $status_report));
+     exit();
+   }
+@@ -385,8 +395,9 @@ if (empty($op) && update_access_allowed()) {
+   // Set up theme system for the maintenance page.
+   drupal_maintenance_theme();
+ 
+-  // Check the update requirements for Drupal.
+-  update_check_requirements();
++  // Check the update requirements for Drupal. Only report on errors at this
++  // stage, since the real requirements check happens further down.
++  update_check_requirements(TRUE);
+ 
+   // Redirect to the update information page if all requirements were met.
+   install_goto('update.php?op=info');
+@@ -418,8 +429,12 @@ if (update_access_allowed()) {
+ 
+   update_fix_compatibility();
+ 
+-  // Check the update requirements for all modules.
+-  update_check_requirements();
++  // Check the update requirements for all modules. If there are warnings, but
++  // no errors, skip reporting them if the user has provided a URL parameter
++  // acknowledging the warnings and indicating a desire to continue anyway. See
++  // drupal_requirements_url().
++  $skip_warnings = !empty($_GET['continue']);
++  update_check_requirements($skip_warnings);
+ 
+   $op = isset($_REQUEST['op']) ? $_REQUEST['op'] : '';
+   switch ($op) {
+@@ -433,7 +448,12 @@ if (update_access_allowed()) {
+ 
+     case 'Apply pending updates':
+       if (isset($_GET['token']) && $_GET['token'] == drupal_get_token('update')) {
+-        update_batch($_POST['start'], $base_url . '/update.php?op=results', $base_url . '/update.php');
++        // Generate absolute URLs for the batch processing (using $base_root),
++        // since the batch API will pass them to url() which does not handle
++        // update.php correctly by default.
++        $batch_url = $base_root . drupal_current_script_url();
++        $redirect_url = $base_root . drupal_current_script_url(array('op' => 'results'));
++        update_batch($_POST['start'], $redirect_url, $batch_url);
+         break;
+       }
+ 

@@ -1,0 +1,136 @@
+diff --git a/CHANGELOG.txt b/CHANGELOG.txt
+index 09662cf..b4beae3 100644
+--- a/CHANGELOG.txt
++++ b/CHANGELOG.txt
+@@ -1,4 +1,9 @@
+ 
++Drupal 7.16, 2012-10-17
++-----------------------
++- Fixed security issues (Arbitrary PHP code execution and information
++  disclosure). See SA-CORE-2012-003.
++
+ Drupal 7.15, 2012-08-01
+ -----------------------
+ - Introduced a 'user_password_reset_timeout' variable to allow the 24-hour
+diff --git a/includes/bootstrap.inc b/includes/bootstrap.inc
+index b868fd3..5eb5924 100644
+--- a/includes/bootstrap.inc
++++ b/includes/bootstrap.inc
+@@ -8,7 +8,7 @@
+ /**
+  * The current system version.
+  */
+-define('VERSION', '7.15');
++define('VERSION', '7.16');
+ 
+ /**
+  * Core API compatibility.
+diff --git a/includes/install.core.inc b/includes/install.core.inc
+index ec3a853..7bcd026 100644
+--- a/includes/install.core.inc
++++ b/includes/install.core.inc
+@@ -295,12 +295,11 @@ function install_begin_request(&$install_state) {
+   else {
+     $task = NULL;
+ 
+-    // Since previous versions of Drupal stored database connection information
+-    // in the 'db_url' variable, we should never let an installation proceed if
+-    // this variable is defined and the settings file was not verified above
+-    // (otherwise we risk installing over an existing site whose settings file
+-    // has not yet been updated).
+-    if (!empty($GLOBALS['db_url'])) {
++    // Do not install over a configured settings.php. Check the 'db_url'
++    // variable in addition to 'databases', since previous versions of Drupal
++    // used that (and we do not want to allow installations on an existing site
++    // whose settings file has not yet been updated).
++    if (!empty($GLOBALS['databases']) || !empty($GLOBALS['db_url'])) {
+       throw new Exception(install_already_done_error());
+     }
+   }
+diff --git a/modules/openid/openid.inc b/modules/openid/openid.inc
+index 9b793d3..3c82815 100644
+--- a/modules/openid/openid.inc
++++ b/modules/openid/openid.inc
+@@ -138,8 +138,28 @@ function openid_redirect_form($form, &$form_state, $url, $message) {
+  */
+ function _openid_xrds_parse($raw_xml) {
+   $services = array();
+-  try {
+-    $xml = @new SimpleXMLElement($raw_xml);
++
++  // For PHP version >= 5.2.11, we can use this function to protect against
++  // malicious doctype declarations and other unexpected entity loading.
++  // However, we will not rely on it, and reject any XML with a DOCTYPE.
++  $disable_entity_loader = function_exists('libxml_disable_entity_loader');
++  if ($disable_entity_loader) {
++    $load_entities = libxml_disable_entity_loader(TRUE);
++  }
++
++  // Load the XML into a DOM document.
++  $dom = new DOMDocument();
++  @$dom->loadXML($raw_xml);
++
++  // Since DOCTYPE declarations from an untrusted source could be malicious, we
++  // stop parsing here and treat the XML as invalid since XRDS documents do not
++  // require, and are not expected to have, a DOCTYPE.
++  if (isset($dom->doctype)) {
++    return array();
++  }
++
++  // Parse the DOM document for the information we need.
++  if ($xml = simplexml_import_dom($dom)) {
+     foreach ($xml->children(OPENID_NS_XRD)->XRD as $xrd) {
+       foreach ($xrd->children(OPENID_NS_XRD)->Service as $service_element) {
+         $service = array(
+@@ -165,9 +185,12 @@ function _openid_xrds_parse($raw_xml) {
+       }
+     }
+   }
+-  catch (Exception $e) {
+-    // Invalid XML.
++
++  // Return the LIBXML options to the previous state before returning.
++  if ($disable_entity_loader) {
++    libxml_disable_entity_loader($load_entities);
+   }
++
+   return $services;
+ }
+ 
+diff --git a/modules/openid/openid.test b/modules/openid/openid.test
+index 7e766b9..1f03c13 100644
+--- a/modules/openid/openid.test
++++ b/modules/openid/openid.test
+@@ -180,6 +180,15 @@ class OpenIDFunctionalTestCase extends OpenIDWebTestCase {
+ 
+     // Verify user was redirected away from user/login to an accessible page.
+     $this->assertResponse(200);
++
++    $this->drupalLogout();
++    // Use a User-supplied Identity that is the URL of an XRDS document.
++    // Tell the test module to add a doctype. This should fail.
++    $identity = url('openid-test/yadis/xrds', array('absolute' => TRUE, 'query' => array('doctype' => 1)));
++    // Test logging in via the login block on the front page.
++    $edit = array('openid_identifier' => $identity);
++    $this->drupalPost('', $edit, t('Log in'));
++    $this->assertRaw(t('Sorry, that is not a valid OpenID. Ensure you have spelled your ID correctly.'), 'XML with DOCTYPE was rejected.');
+   }
+ 
+   /**
+diff --git a/modules/openid/tests/openid_test.module b/modules/openid/tests/openid_test.module
+index 1b0de4e..bcf9f42 100644
+--- a/modules/openid/tests/openid_test.module
++++ b/modules/openid/tests/openid_test.module
+@@ -109,7 +109,11 @@ function openid_test_yadis_xrds() {
+       }
+     }
+     drupal_add_http_header('Content-Type', 'application/xrds+xml');
+-    print '<?xml version="1.0" encoding="UTF-8"?>
++    print '<?xml version="1.0" encoding="UTF-8"?>';
++    if (!empty($_GET['doctype'])) {
++      print "\n<!DOCTYPE dct [ <!ELEMENT blue (#PCDATA)> ]>\n";
++    }
++    print '
+       <xrds:XRDS xmlns:xrds="xri://$xrds" xmlns="xri://$xrd*($v*2.0)" xmlns:openid="http://openid.net/xmlns/1.0">
+         <XRD>
+           <Status cid="' . check_plain(variable_get('openid_test_canonical_id_status', 'verified')) . '"/>
